@@ -1,0 +1,4 @@
+
+roscore
+rosrun lsd_slam_viewer viewer
+rosrun lsd_slam_core dataset_slam _files:=../LSD_room/images _hz:=0 _calib:=../LSD_room/cameraCalibration.cfg

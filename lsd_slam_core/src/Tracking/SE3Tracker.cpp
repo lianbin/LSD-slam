@@ -303,6 +303,7 @@ SE3 SE3Tracker::trackFrame(
 	}
 
 	// ============ track frame ============
+	//Trl的逆
 	Sophus::SE3f referenceToFrame = frameToReference_initialEstimate.inverse().cast<float>();
 	LGS6 ls;
 

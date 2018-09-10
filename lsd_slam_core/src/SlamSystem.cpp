@@ -920,6 +920,7 @@ void SlamSystem::trackFrame(uchar* image, unsigned int frameID, bool blockUntilM
 
 
 	poseConsistencyMutex.lock_shared();
+	//Trw * Twl = Trl ,keyFrameGraph中最后一帧到参考帧的变换
 	SE3 frameToReference_initialEstimate = se3FromSim3(
 			trackingReferencePose->getCamToWorld().inverse() * keyFrameGraph->allFramePoses.back()->getCamToWorld());
 	poseConsistencyMutex.unlock_shared();

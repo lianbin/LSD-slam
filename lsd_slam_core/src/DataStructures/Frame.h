@@ -418,7 +418,7 @@ inline const float* Frame::idepthVar(int level)
 	return data.idepthVar[level];
 }
 
-
+//分配内存，并初始化为-1
 inline bool* Frame::refPixelWasGood()
 {
 	if( data.refPixelWasGood == 0)

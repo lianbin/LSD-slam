@@ -59,7 +59,7 @@ inline float getInterpolatedElement(const float* const mat, const float x, const
 
 	return res;
 }
-
+//得到亚像素精度级别的 梯度(注意深度的第三个维度是图像数据)
 inline Eigen::Vector3f getInterpolatedElement43(const Eigen::Vector4f* const mat, const float x, const float y, const int width)
 {
 	int ix = (int)x;

@@ -109,16 +109,19 @@ void TrackingReference::makePointCloud(int level)
 	float cxInvLevel = keyframe->cxInv(level);
 	float cyInvLevel = keyframe->cyInv(level);
 
-	const float* pyrIdepthSource = keyframe->idepth(level);
-	const float* pyrIdepthVarSource = keyframe->idepthVar(level);
-	const float* pyrColorSource = keyframe->image(level);
-	const Eigen::Vector4f* pyrGradSource = keyframe->gradients(level);
+	const float* pyrIdepthSource = keyframe->idepth(level);//逆深度
+	const float* pyrIdepthVarSource = keyframe->idepthVar(level);//逆深度方差
+	const float* pyrColorSource = keyframe->image(level);//图像
+	const Eigen::Vector4f* pyrGradSource = keyframe->gradients(level);//梯度
 
-	if(posData[level] == nullptr) posData[level] = new Eigen::Vector3f[w*h];
+	if(posData[level] == nullptr) 
+		posData[level] = new Eigen::Vector3f[w*h];
 	if(pointPosInXYGrid[level] == nullptr)
 		pointPosInXYGrid[level] = (int*)Eigen::internal::aligned_malloc(w*h*sizeof(int));;
-	if(gradData[level] == nullptr) gradData[level] = new Eigen::Vector2f[w*h];
-	if(colorAndVarData[level] == nullptr) colorAndVarData[level] = new Eigen::Vector2f[w*h];
+	if(gradData[level] == nullptr) 
+		gradData[level] = new Eigen::Vector2f[w*h];
+	if(colorAndVarData[level] == nullptr) 
+		colorAndVarData[level] = new Eigen::Vector2f[w*h];
 
 	Eigen::Vector3f* posDataPT = posData[level];
 	int* idxPT = pointPosInXYGrid[level];
@@ -131,11 +134,13 @@ void TrackingReference::makePointCloud(int level)
 			int idx = x + y*w;
 
 			if(pyrIdepthVarSource[idx] <= 0 || pyrIdepthSource[idx] == 0) continue;
-
+             //像素->相机
 			*posDataPT = (1.0f / pyrIdepthSource[idx]) * Eigen::Vector3f(fxInvLevel*x+cxInvLevel,fyInvLevel*y+cyInvLevel,1);
+			 //x方向梯度 y方向梯度
 			*gradDataPT = pyrGradSource[idx].head<2>();
+			 //图像像素值以及对应的逆深度方差
 			*colorAndVarDataPT = Eigen::Vector2f(pyrColorSource[idx], pyrIdepthVarSource[idx]);
-			*idxPT = idx;
+			*idxPT = idx;//索引
 
 			posDataPT++;
 			gradDataPT++;
@@ -143,7 +148,7 @@ void TrackingReference::makePointCloud(int level)
 			idxPT++;
 		}
 
-	numData[level] = posDataPT - posData[level];
+	numData[level] = posDataPT - posData[level];//一共存在多少个有效的逆深度
 }
 
 }

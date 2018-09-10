@@ -303,7 +303,7 @@ SE3 SE3Tracker::trackFrame(
 	}
 
 	// ============ track frame ============
-	//Trl的逆
+	//Trl的逆,Tlr
 	Sophus::SE3f referenceToFrame = frameToReference_initialEstimate.inverse().cast<float>();
 	LGS6 ls;
 
@@ -321,7 +321,9 @@ SE3 SE3Tracker::trackFrame(
 
 		reference->makePointCloud(lvl);
 
-		callOptimized(calcResidualAndBuffers, (reference->posData[lvl], reference->colorAndVarData[lvl], SE3TRACKING_MIN_LEVEL == lvl ? reference->pointPosInXYGrid[lvl] : 0, reference->numData[lvl], frame, referenceToFrame, lvl, (plotTracking && lvl == SE3TRACKING_MIN_LEVEL)));
+		callOptimized(calcResidualAndBuffers, (reference->posData[lvl], reference->colorAndVarData[lvl], \
+			SE3TRACKING_MIN_LEVEL == lvl ? reference->pointPosInXYGrid[lvl] : 0, \
+			reference->numData[lvl], frame, referenceToFrame, lvl, (plotTracking && lvl == SE3TRACKING_MIN_LEVEL)));
 		if(buf_warped_size < MIN_GOODPERALL_PIXEL_ABSMIN * (width>>lvl)*(height>>lvl))
 		{
 			diverged = true;
@@ -884,12 +886,12 @@ float SE3Tracker::calcResidualAndBuffersNEON(
 
 
 float SE3Tracker::calcResidualAndBuffers(
-		const Eigen::Vector3f* refPoint,
-		const Eigen::Vector2f* refColVar,
-		int* idxBuf,
-		int refNum,
-		Frame* frame,
-		const Sophus::SE3f& referenceToFrame,
+		const Eigen::Vector3f* refPoint,//参考帧的3D点
+		const Eigen::Vector2f* refColVar,//参考帧的像素点以及逆深度方差
+		int* idxBuf,//有效像素索引
+		int refNum, //有效像素
+		Frame* frame,//当前
+		const Sophus::SE3f& referenceToFrame,//Tlr
 		int level,
 		bool plotResidual)
 {
@@ -906,13 +908,13 @@ float SE3Tracker::calcResidualAndBuffers(
 	float fy_l = KLvl(1,1);
 	float cx_l = KLvl(0,2);
 	float cy_l = KLvl(1,2);
-
+    //Rlr
 	Eigen::Matrix3f rotMat = referenceToFrame.rotationMatrix();
 	Eigen::Vector3f transVec = referenceToFrame.translation();
 	
 	const Eigen::Vector3f* refPoint_max = refPoint + refNum;
 
-
+    //最新一帧的梯度
 	const Eigen::Vector4f* frame_gradients = frame->gradients(level);
 
 	int idx=0;
@@ -934,8 +936,8 @@ float SE3Tracker::calcResidualAndBuffers(
 
 	for(;refPoint<refPoint_max; refPoint++, refColVar++, idxBuf++)
 	{
-
-		Eigen::Vector3f Wxp = rotMat * (*refPoint) + transVec;
+        //Rlr  tlr
+		Eigen::Vector3f Wxp = rotMat * (*refPoint) + transVec; //参考帧中的点，投影到上一个关键帧
 		float u_new = (Wxp[0]/Wxp[2])*fx_l + cx_l;
 		float v_new = (Wxp[1]/Wxp[2])*fy_l + cy_l;
 

@@ -777,6 +777,7 @@ void Frame::releaseMaxGradients(int level)
 	data.maxGradients[level] = 0;
 }
 
+//构建除了金字塔第0层以外的其他层的深度图与方差
 void Frame::buildIDepthAndIDepthVar(int level)
 {
 	if (! data.hasIDepthBeenSet)
@@ -798,7 +799,8 @@ void Frame::buildIDepthAndIDepthVar(int level)
 
 	if(enablePrintDebugInfo && printFrameBuildDebugInfo)
 		printf("CREATE IDepth lvl %d for frame %d\n", level, id());
-	
+
+	//本层图像的长和宽
 	int width = data.width[level];
 	int height = data.height[level];
 	
@@ -809,8 +811,10 @@ void Frame::buildIDepthAndIDepthVar(int level)
 
 	int sw = data.width[level - 1];
 
+	//上一层的
 	const float* idepthSource = data.idepth[level - 1];
 	const float* idepthVarSource = data.idepthVar[level - 1];
+	//本层
 	float* idepthDest = data.idepth[level];
 	float* idepthVarDest = data.idepthVar[level];
 	

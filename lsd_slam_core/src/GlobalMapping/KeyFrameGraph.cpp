@@ -102,7 +102,7 @@ KeyFrameGraph::~KeyFrameGraph()
 		delete p;
 }
 
-
+//将一帧数据的位姿，存储在位姿图中
 void KeyFrameGraph::addFrame(Frame* frame)
 {
 

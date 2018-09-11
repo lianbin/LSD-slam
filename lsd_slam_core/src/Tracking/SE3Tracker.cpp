@@ -483,7 +483,9 @@ SE3 SE3Tracker::trackFrame(
 		reference->keyframe->numFramesTrackedOnThis++;
 
 	frame->initialTrackedResidual = lastResidual / pointUsage;
+	//当前帧到它的参考帧的变换 Trc r-refrence c-current
 	frame->pose->thisToParent_raw = sim3FromSE3(toSophus(referenceToFrame.inverse()),1);
+    //当前帧的参考帧的位姿
 	frame->pose->trackingParent = reference->keyframe->pose;
 	return toSophus(referenceToFrame.inverse());
 }
@@ -749,6 +751,7 @@ float SE3Tracker::calcWeightsAndResidualNEON(
 }
 #endif
 
+//Tcr
 float SE3Tracker::calcWeightsAndResidual(
 		const Sophus::SE3f& referenceToFrame)
 {
@@ -763,7 +766,7 @@ float SE3Tracker::calcWeightsAndResidual(
 		float px = *(buf_warped_x+i);	// x'
 		float py = *(buf_warped_y+i);	// y'
 		float pz = *(buf_warped_z+i);	// z'
-		float d = *(buf_d+i);	// d
+		float d = *(buf_d+i);	// d 逆深度
 		float rp = *(buf_warped_residual+i); // r_p
 		float gx = *(buf_warped_dx+i);	// \delta_x I
 		float gy = *(buf_warped_dy+i);  // \delta_y I
@@ -937,7 +940,7 @@ float SE3Tracker::calcResidualAndBuffers(
 	for(;refPoint<refPoint_max; refPoint++, refColVar++, idxBuf++)
 	{
         //Rlr  tlr
-		Eigen::Vector3f Wxp = rotMat * (*refPoint) + transVec; //参考帧中的点，投影到上一个关键帧
+		Eigen::Vector3f Wxp = rotMat * (*refPoint) + transVec; //参考帧中的点，投影到当前帧
 		float u_new = (Wxp[0]/Wxp[2])*fx_l + cx_l;
 		float v_new = (Wxp[1]/Wxp[2])*fy_l + cy_l;
 
@@ -949,12 +952,12 @@ float SE3Tracker::calcResidualAndBuffers(
 				isGoodOutBuffer[*idxBuf] = false;
 			continue;
 		}
-
+        //插值得到亚像素级的深度和像素亮度
 		Eigen::Vector3f resInterp = getInterpolatedElement43(frame_gradients, u_new, v_new, w);
 
 		float c1 = affineEstimation_a * (*refColVar)[0] + affineEstimation_b;
 		float c2 = resInterp[2];
-		float residual = c1 - c2;
+		float residual = c1 - c2; //得到像素在参考帧和当前帧的亮度差
 
 		float weight = fabsf(residual) < 5.0f ? 1 : 5.0f / fabsf(residual);
 		sxx += c1*c1*weight;
@@ -976,8 +979,8 @@ float SE3Tracker::calcResidualAndBuffers(
 		*(buf_warped_dy+idx) = fy_l * resInterp[1];
 		*(buf_warped_residual+idx) = residual;
 
-		*(buf_d+idx) = 1.0f / (*refPoint)[2];
-		*(buf_idepthVar+idx) = (*refColVar)[1];
+		*(buf_d+idx) = 1.0f / (*refPoint)[2];   //逆深度
+		*(buf_idepthVar+idx) = (*refColVar)[1]; //逆深度方差
 		idx++;
 
 
@@ -989,7 +992,7 @@ float SE3Tracker::calcResidualAndBuffers(
 		}
 		else
 			badCount++;
-
+        //空间点的Z坐标在参考帧 与 在当前帧的比
 		float depthChange = (*refPoint)[2] / Wxp[2];	// if depth becomes larger: pixel becomes "smaller", hence count it less.
 		usageCount += depthChange < 1 ? depthChange : 1;
 

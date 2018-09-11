@@ -995,6 +995,7 @@ void SlamSystem::trackFrame(uchar* image, unsigned int frameID, bool blockUntilM
 
 
 	// Keyframe selection
+	//两个条件判断，是否需要创建新的关键帧
 	latestTrackedFrame = trackingNewFrame;
 	if (!my_createNewKeyframe && currentKeyFrame->numMappedOnThisTotal > MIN_NUM_MAPPED)
 	{
@@ -1028,6 +1029,7 @@ void SlamSystem::trackFrame(uchar* image, unsigned int frameID, bool blockUntilM
 	unmappedTrackedFramesMutex.unlock();
 
 	// implement blocking
+	//阻塞 
 	if(blockUntilMapped && trackingIsGood)
 	{
 		boost::unique_lock<boost::mutex> lock(newFrameMappedMutex);

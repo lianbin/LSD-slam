@@ -485,7 +485,7 @@ void SlamSystem::createNewCurrentKeyframe(std::shared_ptr<Frame> newKeyframeCand
 	}
 
 	currentKeyFrameMutex.lock();
-	currentKeyFrame = newKeyframeCandidate;
+	currentKeyFrame = newKeyframeCandidate;//更新当前关键帧指针
 	currentKeyFrameMutex.unlock();
 }
 void SlamSystem::loadNewCurrentKeyframe(Frame* keyframeToLoad)
@@ -504,9 +504,12 @@ void SlamSystem::loadNewCurrentKeyframe(Frame* keyframeToLoad)
 	currentKeyFrameMutex.unlock();
 }
 
+//这个函数用来改变当前关键帧currentKeyFrame
+//(false, true, 1.0f)
 void SlamSystem::changeKeyframe(bool noCreate, bool force, float maxScore)
 {
 	Frame* newReferenceKF=0;
+	//latestTrackedFrame是track线程中，跟踪完成的最新一帧
 	std::shared_ptr<Frame> newKeyframeCandidate = latestTrackedFrame;
 	if(doKFReActivation && SLAMEnabled)
 	{
@@ -547,10 +550,12 @@ bool SlamSystem::updateKeyframe()
 	unmappedTrackedFramesMutex.lock();
 
 	// remove frames that have a different tracking parent.
+	//SlamSystem::trackFrame中使用了，是用来保存图像帧的队列
 	while(unmappedTrackedFrames.size() > 0 &&
 			(!unmappedTrackedFrames.front()->hasTrackingParent() ||
 					unmappedTrackedFrames.front()->getTrackingParent() != currentKeyFrame.get()))
 	{
+	    //把所有不是跟踪到当前关键帧的图像帧都从队列中剔除
 		unmappedTrackedFrames.front()->clear_refPixelWasGood();
 		unmappedTrackedFrames.pop_front();
 	}
@@ -558,15 +563,20 @@ bool SlamSystem::updateKeyframe()
 	// clone list
 	if(unmappedTrackedFrames.size() > 0)
 	{
+	    //把跟踪到当前关键帧的图像帧都放在references中
 		for(unsigned int i=0;i<unmappedTrackedFrames.size(); i++)
 			references.push_back(unmappedTrackedFrames[i]);
 
 		std::shared_ptr<Frame> popped = unmappedTrackedFrames.front();
-		unmappedTrackedFrames.pop_front();
+		unmappedTrackedFrames.pop_front();   //把最老的图像帧剔除。因为本次会在updateKeyframe
+		                                     //用来建图，下次就用不上了。
 		unmappedTrackedFramesMutex.unlock();
 
 		if(enablePrintDebugInfo && printThreadingInfo)
 			printf("MAPPING %d on %d to %d (%d frames)\n", currentKeyFrame->id(), references.front()->id(), references.back()->id(), (int)references.size());
+		//用最近一次观测取更新当前关键帧的深度（observeDepth）
+	    //对得到的深度图进行一次填补（regularizeDepthMapFillHoles）
+		//计算平均深度图（regularizeDepthMap）
 
 		map->updateKeyframe(references);
 
@@ -780,16 +790,16 @@ bool SlamSystem::doMappingIteration()
 		}
 
 
-		if (createNewKeyFrame)
+		if (createNewKeyFrame)//需要添加新的关键帧
 		{
 			finishCurrentKeyframe();
-			changeKeyframe(false, true, 1.0f);
+			changeKeyframe(false, true, 1.0f);//当前关键帧变量currentKeyFrame都是通过本函数改变
 
 
 			if (displayDepthMap || depthMapScreenshotFlag)
 				debugDisplayDepthMap();
 		}
-		else
+		else     //不需要更新关键帧
 		{
 			bool didSomething = updateKeyframe();
 
@@ -1024,7 +1034,7 @@ void SlamSystem::trackFrame(uchar* image, unsigned int frameID, bool blockUntilM
 
 	unmappedTrackedFramesMutex.lock();
 	if(unmappedTrackedFrames.size() < 50 || (unmappedTrackedFrames.size() < 100 && trackingNewFrame->getTrackingParent()->numMappedOnThisTotal < 10))
-		unmappedTrackedFrames.push_back(trackingNewFrame);
+		unmappedTrackedFrames.push_back(trackingNewFrame);//更新位姿之后，将新的帧添加到待处理序列之中
 	unmappedTrackedFramesSignal.notify_one();
 	unmappedTrackedFramesMutex.unlock();
 

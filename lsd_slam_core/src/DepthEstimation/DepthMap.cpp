@@ -107,7 +107,7 @@ void DepthMap::reset()
 		pt->isValid = false;
 }
 
-
+//
 void DepthMap::observeDepthRow(int yMin, int yMax, RunningStats* stats)
 {
 	const float* keyFrameMaxGradBuf = activeKeyFrame->maxGradients(0);
@@ -124,14 +124,15 @@ void DepthMap::observeDepthRow(int yMin, int yMax, RunningStats* stats)
 			// ======== 1. check absolute grad =========
 			if(hasHypothesis && keyFrameMaxGradBuf[idx] < MIN_ABS_GRAD_DECREASE)
 			{
-				target->isValid = false;
+				target->isValid = false; //设置为非法深度
 				continue;
 			}
-
+            //只有梯度达到一定的阈值，我们才进行估计。
 			if(keyFrameMaxGradBuf[idx] < MIN_ABS_GRAD_CREATE || target->blacklisted < MIN_BLACKLIST)
 				continue;
 
-
+            //对没有逆深度假设的像素位置进行逆深度先验构建；
+            //对有逆深度先验的像素位置进行逆深度更新。
 			bool success;
 			if(!hasHypothesis)
 				success = observeDepthCreate(x, y, idx, stats);
@@ -177,10 +178,39 @@ void DepthMap::observeDepth()
 	}
 }
 
+/*
+//frame->prepareForStereoWith(activeKeyFrame, refToKf, K, 0);
+//other 是参考关键帧 
+void Frame::prepareForStereoWith(Frame* other, Sim3 thisToOther, const Eigen::Matrix3f& K, const int level)
+{
+	Sim3 otherToThis = thisToOther.inverse();
+
+	//otherToThis = data.worldToCam * other->data.camToWorld;
+	K_otherToThis_R = K * otherToThis.rotationMatrix().cast<float>() * otherToThis.scale();
+	otherToThis_t = otherToThis.translation().cast<float>();
+	K_otherToThis_t = K * otherToThis_t;
 
 
 
+	thisToOther_t = thisToOther.translation().cast<float>();
+	K_thisToOther_t = K * thisToOther_t;
+	thisToOther_R = thisToOther.rotationMatrix().cast<float>() * thisToOther.scale();
+	otherToThis_R_row0 = thisToOther_R.col(0);
+	otherToThis_R_row1 = thisToOther_R.col(1);
+	otherToThis_R_row2 = thisToOther_R.col(2);
 
+	distSquared = otherToThis.translation().dot(otherToThis.translation());//平移的
+
+	referenceID = other->id();
+	referenceLevel = level;
+}
+
+*/
+
+
+//x y是关键帧的像素坐标点
+//ref是参考帧
+//prepareForStereoWith
 bool DepthMap::makeAndCheckEPL(const int x, const int y, const Frame* const ref, float* pepx, float* pepy, RunningStats* const stats)
 {
 	int idx = x+y*width;
@@ -188,7 +218,8 @@ bool DepthMap::makeAndCheckEPL(const int x, const int y, const Frame* const ref,
 	// ======= make epl ========
 	// calculate the plane spanned by the two camera centers and the point (x,y,1)
 	// intersect it with the keyframe's image plane (at depth=1)
-	float epx = - fx * ref->thisToOther_t[0] + ref->thisToOther_t[2]*(x - cx);
+	//当前关键帧的相机中心在参考帧的投影
+	float epx = - fx * ref->thisToOther_t[0] + ref->thisToOther_t[2]*(x - cx); //thisToOther_t是参考帧到关键帧的平移tkr
 	float epy = - fy * ref->thisToOther_t[1] + ref->thisToOther_t[2]*(y - cy);
 
 	if(isnanf(epx+epy))
@@ -237,11 +268,12 @@ bool DepthMap::makeAndCheckEPL(const int x, const int y, const Frame* const ref,
 bool DepthMap::observeDepthCreate(const int &x, const int &y, const int &idx, RunningStats* const &stats)
 {
 	DepthMapPixelHypothesis* target = currentDepthMap+idx;
-
+    //博客里面说 一直使用的是oldest_referenceFrame
 	Frame* refFrame = activeKeyFrameIsReactivated ? newest_referenceFrame : oldest_referenceFrame;
 
 	if(refFrame->getTrackingParent() == activeKeyFrame)
 	{
+	    //关键帧在参考帧中的投影，是否在图像内部
 		bool* wasGoodDuringTracking = refFrame->refPixelWasGoodNoCreate();
 		if(wasGoodDuringTracking != 0 && !wasGoodDuringTracking[(x >> SE3TRACKING_MIN_LEVEL) + (width >> SE3TRACKING_MIN_LEVEL)*(y >> SE3TRACKING_MIN_LEVEL)])
 		{
@@ -252,6 +284,8 @@ bool DepthMap::observeDepthCreate(const int &x, const int &y, const int &idx, Ru
 	}
 
 	float epx, epy;
+	//极线搜索是在参考帧中进行的
+	//得到当前关键帧上从极点指向待匹配的像素点的归一化极线矢量
 	bool isGood = makeAndCheckEPL(x, y, refFrame, &epx, &epy, stats);
 	if(!isGood) return false;
 
@@ -260,7 +294,7 @@ bool DepthMap::observeDepthCreate(const int &x, const int &y, const int &idx, Ru
 	float new_u = x;
 	float new_v = y;
 	float result_idepth, result_var, result_eplLength;
-	float error = doLineStereo(
+	float error = doLineStereo(//立体匹配
 			new_u,new_v,epx,epy,
 			0.0f, 1.0f, 1.0f/MIN_DEPTH,
 			refFrame, refFrame->image(0),
@@ -1078,8 +1112,8 @@ void DepthMap::updateKeyframe(std::deque< std::shared_ptr<Frame> > referenceFram
 	struct timeval tv_start_all, tv_end_all;
 	gettimeofday(&tv_start_all, NULL);
 
-	oldest_referenceFrame = referenceFrames.front().get();
-	newest_referenceFrame = referenceFrames.back().get();
+	oldest_referenceFrame = referenceFrames.front().get();//最老的关键帧
+	newest_referenceFrame = referenceFrames.back().get(); //最新的关键帧
 	referenceFrameByID.clear();
 	referenceFrameByID_offset = oldest_referenceFrame->id();
 
@@ -1095,13 +1129,12 @@ void DepthMap::updateKeyframe(std::deque< std::shared_ptr<Frame> > referenceFram
 		}
 
 		Sim3 refToKf;
-		if(frame->pose->trackingParent->frameID == activeKeyFrame->id())
-			refToKf = frame->pose->thisToParent_raw;
+		if(frame->pose->trackingParent->frameID == activeKeyFrame->id())//测试集都是走这里
+			refToKf = frame->pose->thisToParent_raw;//Trc
 		else
 			refToKf = activeKeyFrame->getScaledCamToWorld().inverse() *  frame->getScaledCamToWorld();
-
 		frame->prepareForStereoWith(activeKeyFrame, refToKf, K, 0);
-
+        //所有的参考帧都放入referenceFrameByID容器中，这里while完全可以去掉
 		while((int)referenceFrameByID.size() + referenceFrameByID_offset <= frame->id())
 			referenceFrameByID.push_back(frame.get());
 	}
@@ -1244,7 +1277,7 @@ void DepthMap::createKeyFrame(Frame* new_keyframe)
 	}
 
 
-
+    //参考帧到当前关键帧的变换
 	SE3 oldToNew_SE3 = se3FromSim3(new_keyframe->pose->thisToParent_raw).inverse();
 
 	struct timeval tv_start, tv_end;

@@ -292,6 +292,8 @@ void Frame::setDepthFromGroundTruth(const float* depth, float cov_scale)
 	data.hasIDepthBeenSet = true;
 }
 
+//frame->prepareForStereoWith(activeKeyFrame, refToKf, K, 0);
+//other 是参考关键帧 
 void Frame::prepareForStereoWith(Frame* other, Sim3 thisToOther, const Eigen::Matrix3f& K, const int level)
 {
 	Sim3 otherToThis = thisToOther.inverse();
@@ -310,7 +312,7 @@ void Frame::prepareForStereoWith(Frame* other, Sim3 thisToOther, const Eigen::Ma
 	otherToThis_R_row1 = thisToOther_R.col(1);
 	otherToThis_R_row2 = thisToOther_R.col(2);
 
-	distSquared = otherToThis.translation().dot(otherToThis.translation());
+	distSquared = otherToThis.translation().dot(otherToThis.translation());//平移的
 
 	referenceID = other->id();
 	referenceLevel = level;

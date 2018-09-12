@@ -107,7 +107,7 @@ void DepthMap::reset()
 		pt->isValid = false;
 }
 
-//
+//对当前关键帧的每一行做处理
 void DepthMap::observeDepthRow(int yMin, int yMax, RunningStats* stats)
 {
 	const float* keyFrameMaxGradBuf = activeKeyFrame->maxGradients(0);
@@ -130,12 +130,12 @@ void DepthMap::observeDepthRow(int yMin, int yMax, RunningStats* stats)
             //只有梯度达到一定的阈值，我们才进行估计。
 			if(keyFrameMaxGradBuf[idx] < MIN_ABS_GRAD_CREATE || target->blacklisted < MIN_BLACKLIST)
 				continue;
-
+            //以下操作是针对关键帧
             //对没有逆深度假设的像素位置进行逆深度先验构建；
             //对有逆深度先验的像素位置进行逆深度更新。
 			bool success;
 			if(!hasHypothesis)
-				success = observeDepthCreate(x, y, idx, stats);
+				success = observeDepthCreate(x, y, idx, stats);//针对的是一个像素
 			else
 				success = observeDepthUpdate(x, y, idx, keyFrameMaxGradBuf, stats);
 
@@ -218,14 +218,14 @@ bool DepthMap::makeAndCheckEPL(const int x, const int y, const Frame* const ref,
 	// ======= make epl ========
 	// calculate the plane spanned by the two camera centers and the point (x,y,1)
 	// intersect it with the keyframe's image plane (at depth=1)
-	//当前关键帧的相机中心在参考帧的投影
+	//方向是从极点指向待匹配的像素点
 	float epx = - fx * ref->thisToOther_t[0] + ref->thisToOther_t[2]*(x - cx); //thisToOther_t是参考帧到关键帧的平移tkr
 	float epy = - fy * ref->thisToOther_t[1] + ref->thisToOther_t[2]*(y - cy);
 
 	if(isnanf(epx+epy))
 		return false;
 
-
+    //极线段最小长度
 	// ======== check epl length =========
 	float eplLengthSquared = epx*epx+epy*epy;
 	if(eplLengthSquared < MIN_EPL_LENGTH_SQUARED)
@@ -234,11 +234,11 @@ bool DepthMap::makeAndCheckEPL(const int x, const int y, const Frame* const ref,
 		return false;
 	}
 
-
+   
 	// ===== check epl-grad magnitude ======
 	float gx = activeKeyFrameImageData[idx+1] - activeKeyFrameImageData[idx-1];
 	float gy = activeKeyFrameImageData[idx+width] - activeKeyFrameImageData[idx-width];
-	float eplGradSquared = gx * epx + gy * epy;
+	float eplGradSquared = gx * epx + gy * epy;//梯度与极限的内积
 	eplGradSquared = eplGradSquared*eplGradSquared / eplLengthSquared;	// square and norm with epl-length
 
 	if(eplGradSquared < MIN_EPL_GRAD_SQUARED)
@@ -254,8 +254,8 @@ bool DepthMap::makeAndCheckEPL(const int x, const int y, const Frame* const ref,
 		if(enablePrintDebugInfo) stats->num_observe_skipped_small_epl_angle++;
 		return false;
 	}
-
-
+   
+    //对极线归一化
 	// ===== DONE - return "normalized" epl =====
 	float fac = GRADIENT_SAMPLE_DIST / sqrt(eplLengthSquared);
 	*pepx = epx * fac;
@@ -267,7 +267,7 @@ bool DepthMap::makeAndCheckEPL(const int x, const int y, const Frame* const ref,
 
 bool DepthMap::observeDepthCreate(const int &x, const int &y, const int &idx, RunningStats* const &stats)
 {
-	DepthMapPixelHypothesis* target = currentDepthMap+idx;
+	DepthMapPixelHypothesis* target = currentDepthMap+idx;//像素索引
     //博客里面说 一直使用的是oldest_referenceFrame
 	Frame* refFrame = activeKeyFrameIsReactivated ? newest_referenceFrame : oldest_referenceFrame;
 
@@ -284,13 +284,12 @@ bool DepthMap::observeDepthCreate(const int &x, const int &y, const int &idx, Ru
 	}
 
 	float epx, epy;
-	//极线搜索是在参考帧中进行的
 	//得到当前关键帧上从极点指向待匹配的像素点的归一化极线矢量
 	bool isGood = makeAndCheckEPL(x, y, refFrame, &epx, &epy, stats);
 	if(!isGood) return false;
 
 	if(enablePrintDebugInfo) stats->num_observe_create_attempted++;
-
+    //关键帧的待匹配点
 	float new_u = x;
 	float new_v = y;
 	float result_idepth, result_var, result_eplLength;
@@ -1474,6 +1473,15 @@ int DepthMap::debugPlotDepthMap()
 // returns: result_u/v : point's coordinates in new camera's coordinate system
 // returns: idepth_var: (approximated) measurement variance of inverse depth of result_point_NEW
 // returns error if sucessful; -1 if out of bounds, -2 if not found.
+
+/*
+float error = doLineStereo(//立体匹配
+		new_u,new_v,epx,epy,
+		0.0f, 1.0f, 1.0f/MIN_DEPTH,
+		refFrame, refFrame->image(0),
+		result_idepth, result_var, result_eplLength, stats);
+
+*/
 inline float DepthMap::doLineStereo(
 	const float u, const float v, const float epxn, const float epyn,
 	const float min_idepth, const float prior_idepth, float max_idepth,
@@ -1484,12 +1492,13 @@ inline float DepthMap::doLineStereo(
 	if(enablePrintDebugInfo) stats->num_stereo_calls++;
 
 	// calculate epipolar line start and end point in old image
-	Eigen::Vector3f KinvP = Eigen::Vector3f(fxi*u+cxi,fyi*v+cyi,1.0f);
-	Eigen::Vector3f pInf = referenceFrame->K_otherToThis_R * KinvP;
+	//得到在关键帧中，像素坐标u v，逆深度为prior_idepth的点，在参考帧中的投影像素坐标
+	Eigen::Vector3f KinvP = Eigen::Vector3f(fxi*u+cxi,fyi*v+cyi,1.0f);//关键帧像素点->归一化平面
+	Eigen::Vector3f pInf = referenceFrame->K_otherToThis_R * KinvP;//K_otherToThis_R= K * Rrk
 	Eigen::Vector3f pReal = pInf / prior_idepth + referenceFrame->K_otherToThis_t;
-
-	float rescaleFactor = pReal[2] * prior_idepth;
-
+    
+	float rescaleFactor = pReal[2] * prior_idepth;//见博客
+    //关键帧上极限的范围
 	float firstX = u - 2*epxn*rescaleFactor;
 	float firstY = v - 2*epyn*rescaleFactor;
 	float lastX = u + 2*epxn*rescaleFactor;
@@ -1507,7 +1516,8 @@ inline float DepthMap::doLineStereo(
 		if(enablePrintDebugInfo) stats->num_stereo_rescale_oob++;
 		return -1;
 	}
-
+	//接下来就是求在当前关键帧中的５个（模板）点（的像素值）。
+    //这里的灰度变量中的realVal_p1、realVal_p2是远离极点方向的，另外两个是靠近极点方向的。
 	// calculate values to search for
 	float realVal_p1 = getInterpolatedElement(activeKeyFrameImageData,u + epxn*rescaleFactor, v + epyn*rescaleFactor, width);
 	float realVal_m1 = getInterpolatedElement(activeKeyFrameImageData,u - epxn*rescaleFactor, v - epyn*rescaleFactor, width);
@@ -1519,7 +1529,7 @@ inline float DepthMap::doLineStereo(
 
 //	if(referenceFrame->K_otherToThis_t[2] * max_idepth + pInf[2] < 0.01)
 
-
+   //计算在参考帧对极线上的搜索范围
 	Eigen::Vector3f pClose = pInf + referenceFrame->K_otherToThis_t*max_idepth;
 	// if the assumed close-point lies behind the
 	// image, have to change that.

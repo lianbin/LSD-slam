@@ -135,8 +135,11 @@ void DepthMap::observeDepthRow(int yMin, int yMax, RunningStats* stats)
             //对有逆深度先验的像素位置进行逆深度更新。
 			bool success;
 			if(!hasHypothesis)
-				success = observeDepthCreate(x, y, idx, stats);//针对的是一个像素
+				success = observeDepthCreate(x, y, idx, stats);//针对的是一个像素。得到一个像素的逆深度和方差
 			else
+				//参考帧的选取
+                //极线搜索范围
+                //构建新的逆深度假设或逆深度融合
 				success = observeDepthUpdate(x, y, idx, keyFrameMaxGradBuf, stats);
 
 			if(success)
@@ -324,12 +327,14 @@ bool DepthMap::observeDepthCreate(const int &x, const int &y, const int &idx, Ru
 	return true;
 }
 
+// x y是关键帧的像素点，keyFrameMaxGradBuf是关键帧的梯度幅值
 bool DepthMap::observeDepthUpdate(const int &x, const int &y, const int &idx, const float* keyFrameMaxGradBuf, RunningStats* const &stats)
 {
-	DepthMapPixelHypothesis* target = currentDepthMap+idx;
+	DepthMapPixelHypothesis* target = currentDepthMap+idx;//关键帧的像素点深度
 	Frame* refFrame;
 
-
+    //nextStereoFrameMinID就相当于论文中所讲的“年龄”
+    //参考帧的选择为最“老”的关键帧，也就是距离当前关键帧最近的参考帧
 	if(!activeKeyFrameIsReactivated)
 	{
 		if((int)target->nextStereoFrameMinID - referenceFrameByID_offset >= (int)referenceFrameByID.size())
@@ -347,7 +352,7 @@ bool DepthMap::observeDepthUpdate(const int &x, const int &y, const int &idx, co
 			refFrame = referenceFrameByID[(int)target->nextStereoFrameMinID - referenceFrameByID_offset];
 	}
 	else
-		refFrame = newest_referenceFrame;
+	    refFrame = newest_referenceFrame;
 
 
 	if(refFrame->getTrackingParent() == activeKeyFrame)
@@ -367,6 +372,7 @@ bool DepthMap::observeDepthUpdate(const int &x, const int &y, const int &idx, co
 
 	// which exact point to track, and where from.
 	float sv = sqrt(target->idepth_var_smoothed);
+	//μ±2δ
 	float min_idepth = target->idepth_smoothed - sv*STEREO_EPL_VAR_FAC;
 	float max_idepth = target->idepth_smoothed + sv*STEREO_EPL_VAR_FAC;
 	if(min_idepth < 0) min_idepth = 0;
@@ -375,7 +381,12 @@ bool DepthMap::observeDepthUpdate(const int &x, const int &y, const int &idx, co
 	stats->num_observe_update_attempted++;
 
 	float result_idepth, result_var, result_eplLength;
-
+	//float error = doLineStereo(//立体匹配
+			//new_u,new_v,epx,epy,
+			//0.0f, 1.0f, 1.0f/MIN_DEPTH,
+			//refFrame, refFrame->image(0),
+			//result_idepth, result_var, result_eplLength, stats);
+    //同create函数不同的地方，在于极线的搜索范围
 	float error = doLineStereo(
 			x,y,epx,epy,
 			min_idepth, target->idepth_smoothed ,max_idepth,
@@ -452,7 +463,6 @@ bool DepthMap::observeDepthUpdate(const int &x, const int &y, const int &idx, co
 		return false;
 	}
 
-
 	else
 	{
 		// one more successful observation!
@@ -467,15 +477,15 @@ bool DepthMap::observeDepthUpdate(const int &x, const int &y, const int &idx, co
 
 		// update var with observation
 		float w = result_var / (result_var + id_var);
-		float new_idepth = (1-w)*result_idepth + w*target->idepth;
+		float new_idepth = (1-w)*result_idepth + w*target->idepth;//融合后的深度
 		target->idepth = UNZERO(new_idepth);
 
 		// variance can only decrease from observation; never increase.
-		id_var = id_var * w;
-		if(id_var < target->idepth_var)
-			target->idepth_var = id_var;
+		id_var = id_var * w;//融合后的方差
+		if(id_var < target->idepth_var)//理论上讲，融合之后的方差，一定小于融合之前的方差(证明)
+			target->idepth_var = id_var;//更新方差
 
-		// increase validity!
+		// increase validity!增加有效性
 		target->validity_counter += VALIDITY_COUNTER_INC;
 		float absGrad = keyFrameMaxGradBuf[idx];
 		if(target->validity_counter > VALIDITY_COUNTER_MAX+absGrad*(VALIDITY_COUNTER_MAX_VARIABLE)/255.0f)
@@ -528,16 +538,18 @@ void DepthMap::propagateDepth(Frame* new_keyframe)
 	// wipe depthmap
 	for(DepthMapPixelHypothesis* pt = otherDepthMap+width*height-1; pt >= otherDepthMap; pt--)
 	{
-		pt->isValid = false;
+		pt->isValid = false;//先把新的关键帧的深度图设置为无效
 		pt->blacklisted = 0;
 	}
-
+    //Tnk n-new k-之前的关键帧
 	// re-usable values.
 	SE3 oldToNew_SE3 = se3FromSim3(new_keyframe->pose->thisToParent_raw).inverse();
+	//tnk
 	Eigen::Vector3f trafoInv_t = oldToNew_SE3.translation().cast<float>();
+	//Rnk
 	Eigen::Matrix3f trafoInv_R = oldToNew_SE3.rotationMatrix().matrix().cast<float>();
 
-
+    
 	const bool* trackingWasGood = new_keyframe->getTrackingParent() == activeKeyFrame ? new_keyframe->refPixelWasGoodNoCreate() : 0;
 
 
@@ -555,19 +567,20 @@ void DepthMap::propagateDepth(Frame* new_keyframe)
 		{
 			DepthMapPixelHypothesis* source = currentDepthMap + x + y*width;
 
-			if(!source->isValid)
+			if(!source->isValid)//遍历当前关键帧的每一个有效的地图点
 				continue;
 
 			if(enablePrintDebugInfo) runningStats.num_prop_attempts++;
 
-
+            //将当前关键帧中的3D点，变换到新的关键帧坐标系下
 			Eigen::Vector3f pn = (trafoInv_R * Eigen::Vector3f(x*fxi + cxi,y*fyi + cyi,1.0f)) / source->idepth_smoothed + trafoInv_t;
 
-			float new_idepth = 1.0f / pn[2];
+			float new_idepth = 1.0f / pn[2];//得到新的深度值
 
-			float u_new = pn[0]*new_idepth*fx + cx;
-			float v_new = pn[1]*new_idepth*fy + cy;
+			float u_new = pn[0]*new_idepth*fx + cx;//在新的关键帧图像中的像素位置
+			float v_new = pn[1]*new_idepth*fy + cy;//在新的关键帧图像中的像素位置
 
+            //查看投影之后是否在图像内
 			// check if still within image, if not: DROP.
 			if(!(u_new > 2.1f && v_new > 2.1f && u_new < width-3.1f && v_new < height-3.1f))
 			{
@@ -601,28 +614,28 @@ void DepthMap::propagateDepth(Frame* new_keyframe)
 					continue;
 				}
 			}
-
+            //对满足条件的点进行逆深度构造
 			DepthMapPixelHypothesis* targetBest = otherDepthMap +  newIDX;
 
 			// large idepth = point is near = large increase in variance.
 			// small idepth = point is far = small increase in variance.
-			float idepth_ratio_4 = new_idepth / source->idepth_smoothed;
+			float idepth_ratio_4 = new_idepth / source->idepth_smoothed; //公式15
 			idepth_ratio_4 *= idepth_ratio_4;
 			idepth_ratio_4 *= idepth_ratio_4;
 
-			float new_var =idepth_ratio_4*source->idepth_var;
+			float new_var =idepth_ratio_4*source->idepth_var;//深度传递不确定性
 
 
 			// check for occlusion
 			if(targetBest->isValid)
 			{
 				// if they occlude one another, one gets removed.
-				float diff = targetBest->idepth - new_idepth;
+				float diff = targetBest->idepth - new_idepth; //之前的逆深度与现在的逆深度的差
 				if(DIFF_FAC_PROP_MERGE*diff*diff >
 					new_var +
 					targetBest->idepth_var)
 				{
-					if(new_idepth < targetBest->idepth)
+					if(new_idepth < targetBest->idepth)//距离变大，舍弃 ，为什么？
 					{
 						if(enablePrintDebugInfo) runningStats.num_prop_occluded++;
 						continue;
@@ -635,7 +648,7 @@ void DepthMap::propagateDepth(Frame* new_keyframe)
 				}
 			}
 
-
+            //如果对应像素位置没有有效的逆深度假设，则构建新的逆深度假设
 			if(!targetBest->isValid)
 			{
 				if(enablePrintDebugInfo) runningStats.num_prop_created++;
@@ -646,11 +659,13 @@ void DepthMap::propagateDepth(Frame* new_keyframe)
 						source->validity_counter);
 
 			}
+			//使用先验进行融合
 			else
 			{
 				if(enablePrintDebugInfo) runningStats.num_prop_merged++;
 
 				// merge idepth ekf-style
+				//高斯融合公式
 				float w = new_var / (targetBest->idepth_var + new_var);
 				float merged_new_idepth = w*targetBest->idepth + (1.0f-w)*new_idepth;
 
@@ -667,7 +682,7 @@ void DepthMap::propagateDepth(Frame* new_keyframe)
 		}
 
 	// swap!
-	std::swap(currentDepthMap, otherDepthMap);
+	std::swap(currentDepthMap, otherDepthMap);//
 
 
 	if(enablePrintDebugInfo && printPropagationStatistics)
@@ -764,9 +779,9 @@ void DepthMap::buildRegIntegralBufferRow1(int yMin, int yMax, RunningStats* stat
 		for(int x=0;x<width;x++)
 		{
 			if(ptSrc->isValid)
-				validityIntegralBufferSUM += ptSrc->validity_counter;
+				validityIntegralBufferSUM += ptSrc->validity_counter;//总的有效个数
 
-			*(validityIntegralBufferPT++) = validityIntegralBufferSUM;
+			*(validityIntegralBufferPT++) = validityIntegralBufferSUM;//积分图
 			ptSrc++;
 		}
 	}
@@ -1184,7 +1199,7 @@ void DepthMap::updateKeyframe(std::deque< std::shared_ptr<Frame> > referenceFram
 	if(!activeKeyFrame->depthHasBeenUpdatedFlag)
 	{
 		gettimeofday(&tv_start, NULL);
-		activeKeyFrame->setDepth(currentDepthMap);
+		activeKeyFrame->setDepth(currentDepthMap);//设置关键帧的深度图
 		gettimeofday(&tv_end, NULL);
 		msSetDepth = 0.9*msSetDepth + 0.1*((tv_end.tv_sec-tv_start.tv_sec)*1000.0f + (tv_end.tv_usec-tv_start.tv_usec)/1000.0f);
 		nSetDepth++;
@@ -1276,17 +1291,17 @@ void DepthMap::createKeyFrame(Frame* new_keyframe)
 	}
 
 
-    //参考帧到当前关键帧的变换
+    //Tkn 的逆  Tnk。n-new  k-关键帧
 	SE3 oldToNew_SE3 = se3FromSim3(new_keyframe->pose->thisToParent_raw).inverse();
 
 	struct timeval tv_start, tv_end;
 	gettimeofday(&tv_start, NULL);
-	propagateDepth(new_keyframe);
+	propagateDepth(new_keyframe);//深度传递函数
 	gettimeofday(&tv_end, NULL);
 	msPropagate = 0.9*msPropagate + 0.1*((tv_end.tv_sec-tv_start.tv_sec)*1000.0f + (tv_end.tv_usec-tv_start.tv_usec)/1000.0f);
 	nPropagate++;
 
-	activeKeyFrame = new_keyframe;
+	activeKeyFrame = new_keyframe; //更新激活关键帧
 	activeKeyFramelock = activeKeyFrame->getActiveLock();
 	activeKeyFrameImageData = new_keyframe->image(0);
 	activeKeyFrameIsReactivated = false;
@@ -1322,8 +1337,8 @@ void DepthMap::createKeyFrame(Frame* new_keyframe)
 	{
 		if(!source->isValid)
 			continue;
-		sumIdepth += source->idepth_smoothed;
-		numIdepth++;
+		sumIdepth += source->idepth_smoothed;//深度和
+		numIdepth++;//有效深度点
 	}
 	float rescaleFactor = numIdepth / sumIdepth;
 	float rescaleFactor2 = rescaleFactor*rescaleFactor;
@@ -1519,6 +1534,8 @@ inline float DepthMap::doLineStereo(
 	//接下来就是求在当前关键帧中的５个（模板）点（的像素值）。
     //这里的灰度变量中的realVal_p1、realVal_p2是远离极点方向的，另外两个是靠近极点方向的。
 	// calculate values to search for
+	//等距的选择5个像素点
+    //注意：这里的灰度变量中的realVal_p1、realVal_p2是远离极点方向的，另外两个是靠近极点方向的。
 	float realVal_p1 = getInterpolatedElement(activeKeyFrameImageData,u + epxn*rescaleFactor, v + epyn*rescaleFactor, width);
 	float realVal_m1 = getInterpolatedElement(activeKeyFrameImageData,u - epxn*rescaleFactor, v - epyn*rescaleFactor, width);
 	float realVal = getInterpolatedElement(activeKeyFrameImageData,u, v, width);
@@ -1530,16 +1547,20 @@ inline float DepthMap::doLineStereo(
 //	if(referenceFrame->K_otherToThis_t[2] * max_idepth + pInf[2] < 0.01)
 
    //计算在参考帧对极线上的搜索范围
-	Eigen::Vector3f pClose = pInf + referenceFrame->K_otherToThis_t*max_idepth;
+	Eigen::Vector3f pClose = pInf + referenceFrame->K_otherToThis_t*max_idepth; //（1）
 	// if the assumed close-point lies behind the
 	// image, have to change that.
-	if(pClose[2] < 0.001f)
+	if(pClose[2] < 0.001f)//如果点在参考帧的后面，则进行深度矫正。
 	{
+	    //pClose[2]最少为0.001.然后利用(1),反算得到max_idepth
 		max_idepth = (0.001f-pInf[2]) / referenceFrame->K_otherToThis_t[2];
-		pClose = pInf + referenceFrame->K_otherToThis_t*max_idepth;
+		pClose = pInf + referenceFrame->K_otherToThis_t*max_idepth;//重新得到投影点
 	}
+	//得到像素坐标（在参考帧中）
 	pClose = pClose / pClose[2]; // pos in new image of point (xy), assuming max_idepth
 
+	//idepth是逆深度，idepth的值越大，则depth越小。idepth的值越小，则depth越大。
+	//所以pFar对应min_idepth ，pClose对应max_idepth
 	Eigen::Vector3f pFar = pInf + referenceFrame->K_otherToThis_t*min_idepth;
 	// if the assumed far-point lies behind the image or closter than the near-point,
 	// we moved past the Point it and should stop.
@@ -1548,6 +1569,7 @@ inline float DepthMap::doLineStereo(
 		if(enablePrintDebugInfo) stats->num_stereo_inf_oob++;
 		return -1;
 	}
+	//像素点坐标
 	pFar = pFar / pFar[2]; // pos in new image of point (xy), assuming min_idepth
 
 
@@ -1557,12 +1579,12 @@ inline float DepthMap::doLineStereo(
 
 	// calculate increments in which we will step through the epipolar line.
 	// they are sampleDist (or half sample dist) long
-	float incx = pClose[0] - pFar[0];
-	float incy = pClose[1] - pFar[1];
-	float eplLength = sqrt(incx*incx+incy*incy);
+	float incx = pClose[0] - pFar[0];//极线x方向的范围
+	float incy = pClose[1] - pFar[1];//极线y方向的范围
+	float eplLength = sqrt(incx*incx+incy*incy);//极线长度
 	if(!eplLength > 0 || std::isinf(eplLength)) return -4;
 
-	if(eplLength > MAX_EPL_LENGTH_CROP)
+	if(eplLength > MAX_EPL_LENGTH_CROP)//极线的最大长度是MAX_EPL_LENGTH_CROP
 	{
 		pClose[0] = pFar[0] + incx*MAX_EPL_LENGTH_CROP/eplLength;
 		pClose[1] = pFar[1] + incy*MAX_EPL_LENGTH_CROP/eplLength;
@@ -1601,7 +1623,8 @@ inline float DepthMap::doLineStereo(
 		return -1;
 	}
 
-
+//这里判断近点和远点是否在图像内，如果近点在图像外则把近点
+//沿着极线移到图像内。并且判断最终的极线段度是否满足要求。
 
 	// if near point is outside: move inside, and test length again.
 	if(
@@ -1657,7 +1680,7 @@ inline float DepthMap::doLineStereo(
 
 	}
 
-
+//开始遍历参考帧上的极线段。
 	// from here on:
 	// - pInf: search start-point
 	// - p0: search end-point
@@ -1667,6 +1690,13 @@ inline float DepthMap::doLineStereo(
 
 	float cpx = pFar[0];
 	float cpy =  pFar[1];
+
+	//float realVal_p1 = getInterpolatedElement(activeKeyFrameImageData,u + epxn*rescaleFactor, v + epyn*rescaleFactor, width);
+	//float realVal_m1 = getInterpolatedElement(activeKeyFrameImageData,u - epxn*rescaleFactor, v - epyn*rescaleFactor, width);
+	//float realVal = getInterpolatedElement(activeKeyFrameImageData,u, v, width);
+	//float realVal_m2 = getInterpolatedElement(activeKeyFrameImageData,u - 2*epxn*rescaleFactor, v - 2*epyn*rescaleFactor, width);
+	//float realVal_p2 = getInterpolatedElement(activeKeyFrameImageData,u + 2*epxn*rescaleFactor, v + 2*epyn*rescaleFactor, width);
+
 
 	float val_cp_m2 = getInterpolatedElement(referenceFrameImage,cpx-2.0f*incx, cpy-2.0f*incy, width);
 	float val_cp_m1 = getInterpolatedElement(referenceFrameImage,cpx-incx, cpy-incy, width);
@@ -1711,7 +1741,7 @@ inline float DepthMap::doLineStereo(
 
 	// alternating intermediate vars
 	float e1A=NAN, e1B=NAN, e2A=NAN, e2B=NAN, e3A=NAN, e3B=NAN, e4A=NAN, e4B=NAN, e5A=NAN, e5B=NAN;
-
+    //得到关键帧的5点模板，在参考帧中的最佳匹配像素坐标
 	int loopCBest=-1, loopCSecond =-1;
 	while(((incx < 0) == (cpx > pClose[0]) && (incy < 0) == (cpy > pClose[1])) || loopCounter == 0)
 	{
@@ -1721,7 +1751,7 @@ inline float DepthMap::doLineStereo(
 
 		// hacky but fast way to get error and differential error: switch buffer variables for last loop.
 		float ee = 0;
-		if(loopCounter%2==0)
+		if(loopCounter%2==0)//SSD
 		{
 			// calc error and accumulate sums.
 			e1A = val_cp_p2 - realVal_p2;ee += e1A*e1A;
@@ -1730,7 +1760,7 @@ inline float DepthMap::doLineStereo(
 			e4A = val_cp_m1 - realVal_m1;ee += e4A*e4A;
 			e5A = val_cp_m2 - realVal_m2;ee += e5A*e5A;
 		}
-		else
+		else//SSD
 		{
 			// calc error and accumulate sums.
 			e1B = val_cp_p2 - realVal_p2;ee += e1B*e1B;
@@ -1795,7 +1825,7 @@ inline float DepthMap::doLineStereo(
 	}
 
 	// if error too big, will return -3, otherwise -2.
-	if(best_match_err > 4.0f*(float)MAX_ERROR_STEREO)
+	if(best_match_err > 4.0f*(float)MAX_ERROR_STEREO)//判断误差是否满足要求
 	{
 		if(enablePrintDebugInfo) stats->num_stereo_invalid_bigErr++;
 		return -3;
@@ -1803,6 +1833,7 @@ inline float DepthMap::doLineStereo(
 
 
 	// check if clear enough winner
+	//最好位置有没有明显优于第二好位置。如果不满足就返回失败。
 	if(abs(loopCBest - loopCSecond) > 1.0f && MIN_DISTANCE_ERROR_STEREO * best_match_err > second_best_match_err)
 	{
 		if(enablePrintDebugInfo) stats->num_stereo_invalid_unclear_winner++;
@@ -1916,6 +1947,8 @@ inline float DepthMap::doLineStereo(
 	// * KinvP = Kinv * (x,y,1); where x,y are pixel coordinates of point we search for, in the KF.
 	// * best_match_x = x-coordinate of found correspondence in the reference frame.
 
+
+    //博客式子(13)一个求深度 一个求方差
 	float idnew_best_match;	// depth in the new image
 	float alpha; // d(idnew_best_match) / d(disparity in pixel) == conputed inverse depth derived by the pixel-disparity.
 	if(incx*incx>incy*incy)

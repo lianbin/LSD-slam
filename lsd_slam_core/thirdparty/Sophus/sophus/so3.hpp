@@ -89,20 +89,20 @@ public:
 
   /** \brief degree of freedom of group
    *         (three for rotation) */
-  static const int DoF = 3;
+  static const int DoF = 3; //3维空间的自由度
   /** \brief number of internal parameters used
    *         (unit quaternion for rotation) */
-  static const int num_parameters = 4;
+  static const int num_parameters = 4;//四元素有四个参数
   /** \brief group transformations are NxN matrices */
-  static const int N = 3;
+  static const int N = 3; //旋转矩阵是3X3矩阵
   /** \brief group transfomation type */
-  typedef Matrix<Scalar,N,N> Transformation;
+  typedef Matrix<Scalar,N,N> Transformation; //3X3矩阵
   /** \brief point type */
-  typedef Matrix<Scalar,3,1> Point;
+  typedef Matrix<Scalar,3,1> Point; //3x1的空间点
   /** \brief tangent vector type */
-  typedef Matrix<Scalar,DoF,1> Tangent;
+  typedef Matrix<Scalar,DoF,1> Tangent; //3*1的角速
   /** \brief adjoint transformation type */
-  typedef Matrix<Scalar,DoF,DoF> Adjoint;
+  typedef Matrix<Scalar,DoF,DoF> Adjoint;//3*3的邻接矩阵
 
   /**
    * \brief Adjoint transformation

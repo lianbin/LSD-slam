@@ -64,12 +64,12 @@ SlamSystem::SlamSystem(int w, int h, Eigen::Matrix3f K, bool enableSLAM)
 	trackingIsGood = true;
 
 
-	currentKeyFrame =  nullptr;
+	currentKeyFrame =  nullptr;//当前帧指针
 	trackingReferenceFrameSharedPT = nullptr;
 	keyFrameGraph = new KeyFrameGraph();
 	createNewKeyFrame = false;
 
-	map =  new DepthMap(w,h,K);
+	map =  new DepthMap(w,h,K);//深度图
 	
 	newConstraintAdded = false;
 	haveUnmergedOptimizationOffset = false;
@@ -77,7 +77,7 @@ SlamSystem::SlamSystem(int w, int h, Eigen::Matrix3f K, bool enableSLAM)
 
 	tracker = new SE3Tracker(w,h,K);
 	// Do not use more than 4 levels for odometry tracking
-	for (int level = 4; level < PYRAMID_LEVELS; ++level)
+	for (int level = 4; level < PYRAMID_LEVELS; ++level)//将maxItsPerLvl[4] = 0
 		tracker->settings.maxItsPerLvl[level] = 0;
 	trackingReference = new TrackingReference();
 	mappingTrackingReference = new TrackingReference();
@@ -873,10 +873,10 @@ void SlamSystem::randomInit(uchar* image, double timeStamp, int id)
 
 
 	currentKeyFrameMutex.lock();
-    //构建一个数据帧。()
+    //构建当前关键帧
 	currentKeyFrame.reset(new Frame(id, width, height, K, timeStamp, image));
-	map->initializeRandomly(currentKeyFrame.get());
-	keyFrameGraph->addFrame(currentKeyFrame.get());
+	map->initializeRandomly(currentKeyFrame.get());//初始化地图
+	keyFrameGraph->addFrame(currentKeyFrame.get());//添加到帧的位姿图中
 
 	currentKeyFrameMutex.unlock();
 
@@ -916,11 +916,11 @@ void SlamSystem::trackFrame(uchar* image, unsigned int frameID, bool blockUntilM
 	bool my_createNewKeyframe = createNewKeyFrame;	// pre-save here, to make decision afterwards.
 	if(trackingReference->keyframe != currentKeyFrame.get() || currentKeyFrame->depthHasBeenUpdatedFlag)
 	{
-		trackingReference->importFrame(currentKeyFrame.get());
+		trackingReference->importFrame(currentKeyFrame.get());//跟踪的关键帧更新
 		currentKeyFrame->depthHasBeenUpdatedFlag = false;
-		trackingReferenceFrameSharedPT = currentKeyFrame;
+		trackingReferenceFrameSharedPT = currentKeyFrame;//跟踪的参考帧为当前的关键帧
 	}
-
+    //参考关键帧的位姿
 	FramePoseStruct* trackingReferencePose = trackingReference->keyframe->pose;
 	currentKeyFrameMutex.unlock();
 
@@ -931,11 +931,15 @@ void SlamSystem::trackFrame(uchar* image, unsigned int frameID, bool blockUntilM
 
 	poseConsistencyMutex.lock_shared();
 	//Trw * Twl = Trl ,keyFrameGraph中最后一帧到参考帧的变换
+	//将上一帧到参考关键帧的变换，作为本帧到参考关键帧变换的初始估计
 	SE3 frameToReference_initialEstimate = se3FromSim3(
 			trackingReferencePose->getCamToWorld().inverse() * keyFrameGraph->allFramePoses.back()->getCamToWorld());
 	poseConsistencyMutex.unlock_shared();
 
-
+    //std::cout <<"the first time  "<<std::endl;
+	///std::cout <<frameToReference_initialEstimate.rotationMatrix()<<std::endl;;
+	//tcr
+	//std::cout <<frameToReference_initialEstimate.translation()<<std::endl;;
 
 	struct timeval tv_start, tv_end;
 	gettimeofday(&tv_start, NULL);

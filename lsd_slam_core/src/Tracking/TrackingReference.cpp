@@ -93,6 +93,7 @@ void TrackingReference::invalidate()
 	keyframe = 0;
 }
 
+//计算有效像素点的3D坐标 
 void TrackingReference::makePointCloud(int level)
 {
 	assert(keyframe != 0);
@@ -112,7 +113,7 @@ void TrackingReference::makePointCloud(int level)
 	const float* pyrIdepthSource = keyframe->idepth(level);//逆深度
 	const float* pyrIdepthVarSource = keyframe->idepthVar(level);//逆深度方差
 	const float* pyrColorSource = keyframe->image(level);//图像
-	const Eigen::Vector4f* pyrGradSource = keyframe->gradients(level);//梯度
+	const Eigen::Vector4f* pyrGradSource = keyframe->gradients(level);//梯度 (dx dy 像素值 最后一个没有用)
 
 	if(posData[level] == nullptr) 
 		posData[level] = new Eigen::Vector3f[w*h];
@@ -133,8 +134,9 @@ void TrackingReference::makePointCloud(int level)
 		{
 			int idx = x + y*w;
 
+            //该像素点不存在深度值，continue
 			if(pyrIdepthVarSource[idx] <= 0 || pyrIdepthSource[idx] == 0) continue;
-             //像素->相机
+             //像素->相机坐标系下的坐标
 			*posDataPT = (1.0f / pyrIdepthSource[idx]) * Eigen::Vector3f(fxInvLevel*x+cxInvLevel,fyInvLevel*y+cyInvLevel,1);
 			 //x方向梯度 y方向梯度
 			*gradDataPT = pyrGradSource[idx].head<2>();

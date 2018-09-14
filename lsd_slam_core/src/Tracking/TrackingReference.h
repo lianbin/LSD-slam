@@ -65,7 +65,7 @@ public:
 	Eigen::Vector3f* posData[PYRAMID_LEVELS];	// (x,y,z)
 	Eigen::Vector2f* gradData[PYRAMID_LEVELS];	// (dx, dy)
 	Eigen::Vector2f* colorAndVarData[PYRAMID_LEVELS];	// (I, Var)
-	int* pointPosInXYGrid[PYRAMID_LEVELS];	// x + y*width
+	int* pointPosInXYGrid[PYRAMID_LEVELS];	// x + y*width  存储有效像素点的索引
 	int numData[PYRAMID_LEVELS];
 
 private:

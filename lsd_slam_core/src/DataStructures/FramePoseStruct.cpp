@@ -34,8 +34,8 @@ FramePoseStruct::FramePoseStruct(Frame* frame)
 {
 	cacheValidFor = -1;
 	isOptimized = false;
-	thisToParent_raw = camToWorld = camToWorld_new = Sim3();
-	this->frame = frame;
+	thisToParent_raw = camToWorld = camToWorld_new = Sim3();//初始化位姿，旋转为单位矩阵，平移为0
+	this->frame = frame; //Frame引用
 	frameID = frame->id();
 	trackingParent = 0;
 	isRegisteredToGraph = false;

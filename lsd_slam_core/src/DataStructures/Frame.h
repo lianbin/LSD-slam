@@ -236,6 +236,7 @@ private:
 
 		Eigen::Matrix3f K[PYRAMID_LEVELS], KInv[PYRAMID_LEVELS];
 		float fx[PYRAMID_LEVELS], fy[PYRAMID_LEVELS], cx[PYRAMID_LEVELS], cy[PYRAMID_LEVELS];
+		//内参矩阵的逆矩阵元素
 		float fxInv[PYRAMID_LEVELS], fyInv[PYRAMID_LEVELS], cxInv[PYRAMID_LEVELS], cyInv[PYRAMID_LEVELS];
 		
 		double timestamp;
@@ -255,11 +256,11 @@ private:
 
 		// negative depthvalues are actually allowed, so setting this to -1 does NOT invalidate the pixel's depth.
 		// a pixel is valid iff idepthVar[i] > 0.
-		float* idepth[PYRAMID_LEVELS];
+		float* idepth[PYRAMID_LEVELS];//本帧的深度图
 		bool idepthValid[PYRAMID_LEVELS];
 		
 		// MUST contain -1 for invalid pixel (that dont have depth)!!
-		float* idepthVar[PYRAMID_LEVELS];
+		float* idepthVar[PYRAMID_LEVELS];//本帧的方差图
 		bool idepthVarValid[PYRAMID_LEVELS];
 
 		// data needed for re-activating the frame. theoretically, this is all data the

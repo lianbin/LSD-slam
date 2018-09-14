@@ -35,8 +35,9 @@ int privateFrameAllocCount = 0;
 Frame::Frame(int id, int width, int height, const Eigen::Matrix3f& K, double timestamp, const unsigned char* image)
 {
 	initialize(id, width, height, K, timestamp);
-	
+	//给第一层金子塔分配存储图像数据的内存
 	data.image[0] = FrameMemory::getInstance().getFloatBuffer(data.width[0]*data.height[0]);
+    //最后一个像素点的地址
 	float* maxPt = data.image[0] + data.width[0]*data.height[0];
     //复制原图像
 	for(float* pt = data.image[0]; pt < maxPt; pt++)
@@ -195,13 +196,14 @@ void Frame::calculateMeanInformation()
 	meanInformation = sum / goodpx;
 }
 
-
+//将一个深度图，复制给Frame
 void Frame::setDepth(const DepthMapPixelHypothesis* newDepth)
 {
 
 	boost::shared_lock<boost::shared_mutex> lock = getActiveLock();
 	boost::unique_lock<boost::mutex> lock2(buildMutex);
 
+    //分配内存
 	if(data.idepth[0] == 0)
 		data.idepth[0] = FrameMemory::getInstance().getFloatBuffer(data.width[0]*data.height[0]);
 	if(data.idepthVar[0] == 0)
@@ -209,11 +211,12 @@ void Frame::setDepth(const DepthMapPixelHypothesis* newDepth)
 
 	float* pyrIDepth = data.idepth[0];
 	float* pyrIDepthVar = data.idepthVar[0];
-	float* pyrIDepthMax = pyrIDepth + (data.width[0]*data.height[0]);
+	float* pyrIDepthMax = pyrIDepth + (data.width[0]*data.height[0]);//最大的深度图地址
 	
 	float sumIdepth=0;
 	int numIdepth=0;
 
+	//复制newDepth到Frame中的
 	for (; pyrIDepth < pyrIDepthMax; ++ pyrIDepth, ++ pyrIDepthVar, ++ newDepth) //, ++ pyrRefID)
 	{
 		if (newDepth->isValid && newDepth->idepth_smoothed >= -0.05)
@@ -231,10 +234,10 @@ void Frame::setDepth(const DepthMapPixelHypothesis* newDepth)
 		}
 	}
 	
-	meanIdepth = sumIdepth / numIdepth;
-	numPoints = numIdepth;
+	meanIdepth = sumIdepth / numIdepth;//平均深度
+	numPoints = numIdepth;   //有效点的个数
 
-
+    //将本帧的深度图 深度图的方差设置为合法
 	data.idepthValid[0] = true;
 	data.idepthVarValid[0] = true;
 	release(IDEPTH | IDEPTH_VAR, true, true);
@@ -424,7 +427,7 @@ void Frame::initialize(int id, int width, int height, const Eigen::Matrix3f& K, 
 	
 	numMappablePixels = -1;
 
-	//图像金字塔
+	//图像金字塔 一共是5层金字塔
 	for (int level = 0; level < PYRAMID_LEVELS; ++ level)
 	{
 	    //每一层是上一层的1/2长度和宽度
@@ -446,7 +449,7 @@ void Frame::initialize(int id, int width, int height, const Eigen::Matrix3f& K, 
 
 // 		data.refIDValid[level] = false;
 		
-		if (level > 0)
+		if (level > 0)//随着金字塔层的改变，内参要进行对应的缩放
 		{
 		    
 			data.fx[level] = data.fx[level-1] * 0.5;

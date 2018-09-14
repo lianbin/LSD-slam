@@ -169,7 +169,7 @@ private:
 
 	// Individual / no locking
 	Output3DWrapper* outputWrapper;	// no lock required
-	KeyFrameGraph* keyFrameGraph;	// has own locks
+	KeyFrameGraph* keyFrameGraph;	// has own locks 用以存储所有的Frame
 
 
 

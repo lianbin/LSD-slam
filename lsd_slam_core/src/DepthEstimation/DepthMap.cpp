@@ -43,10 +43,11 @@ DepthMap::DepthMap(int w, int h, const Eigen::Matrix3f& K)
 	width = w;
 	height = h;
 
-	activeKeyFrame = 0;
+	activeKeyFrame = 0;     //激活关键帧
 	activeKeyFrameIsReactivated = false;
-	otherDepthMap = new DepthMapPixelHypothesis[width*height];//每个像素一个DepthMapPixelHypothesis结构
-	currentDepthMap = new DepthMapPixelHypothesis[width*height];
+	//主要是维护下面两个深度图
+	otherDepthMap = new DepthMapPixelHypothesis[width*height];  //每个像素一个DepthMapPixelHypothesis结构
+	currentDepthMap = new DepthMapPixelHypothesis[width*height];//当前深度图
 
 	validityIntegralBuffer = (int*)Eigen::internal::aligned_malloc(width*height*sizeof(int));
 
@@ -65,7 +66,7 @@ DepthMap::DepthMap(int w, int h, const Eigen::Matrix3f& K)
 	cx = K(0,2);
 	cy = K(1,2);
 
-	KInv = K.inverse();
+	KInv = K.inverse();//内参矩阵的逆矩阵
 	fxi = KInv(0,0);
 	fyi = KInv(1,1);
 	cxi = KInv(0,2);
@@ -934,26 +935,26 @@ void DepthMap::initializeRandomly(Frame* new_frame)
 	activeKeyFrame = new_frame;//激活帧
 	activeKeyFrameImageData = activeKeyFrame->image(0);
 	activeKeyFrameIsReactivated = false;
-
+    //帧的梯度幅值
 	const float* maxGradients = new_frame->maxGradients();
     //
 	for(int y=1;y<height-1;y++)
 	{
 		for(int x=1;x<width-1;x++)
 		{
-			if(maxGradients[x+y*width] > MIN_ABS_GRAD_CREATE)
+			if(maxGradients[x+y*width] > MIN_ABS_GRAD_CREATE)//达到梯度阈值要求的像素
 			{
-			    //随机深度
+			    //随机生成从0.5~1.0的深度
 				float idepth = 0.5f + 1.0f * ((rand() % 100001) / 100000.0f);
 				//初始化深度图点
 				currentDepthMap[x+y*width] = DepthMapPixelHypothesis(
 						idepth,
 						idepth,
-						VAR_RANDOM_INIT_INITIAL,
+						VAR_RANDOM_INIT_INITIAL,//初始化方差
 						VAR_RANDOM_INIT_INITIAL,
 						20);
 			}
-			else
+			else//舍弃没有明显梯度的像素点
 			{
 				currentDepthMap[x+y*width].isValid = false;
 				currentDepthMap[x+y*width].blacklisted = 0;
@@ -962,7 +963,7 @@ void DepthMap::initializeRandomly(Frame* new_frame)
 	}
 
 
-	activeKeyFrame->setDepth(currentDepthMap);
+	activeKeyFrame->setDepth(currentDepthMap); //当前关键帧的深度图
 }
 
 

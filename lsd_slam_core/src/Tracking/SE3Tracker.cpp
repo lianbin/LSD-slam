@@ -63,8 +63,9 @@ SE3Tracker::SE3Tracker(int w, int h, Eigen::Matrix3f K)
 	cxi = KInv(0,2);
 	cyi = KInv(1,2);
 
-
+    //存储误差
 	buf_warped_residual = (float*)Eigen::internal::aligned_malloc(w*h*sizeof(float));
+	//梯度
 	buf_warped_dx = (float*)Eigen::internal::aligned_malloc(w*h*sizeof(float));
 	buf_warped_dy = (float*)Eigen::internal::aligned_malloc(w*h*sizeof(float));
 	buf_warped_x = (float*)Eigen::internal::aligned_malloc(w*h*sizeof(float));
@@ -277,6 +278,10 @@ SE3 SE3Tracker::trackFrameOnPermaref(
 
 // tracks a frame.
 // first_frame has depth, second_frame DOES NOT have depth.
+
+//参考帧的像素深度已知
+//当前帧的像素深度是未知的
+//第三个参数是Trc的初始估计 r-参考帧 c-当前帧
 SE3 SE3Tracker::trackFrame(
 		TrackingReference* reference,
 		Frame* frame,
@@ -303,7 +308,7 @@ SE3 SE3Tracker::trackFrame(
 	}
 
 	// ============ track frame ============
-	//Trl的逆,Tlr
+	//Trc的逆矩阵,Tcr
 	Sophus::SE3f referenceToFrame = frameToReference_initialEstimate.inverse().cast<float>();
 	LGS6 ls;
 
@@ -313,14 +318,14 @@ SE3 SE3Tracker::trackFrame(
 
 	float last_residual = 0;
 
-
+    //循环金字塔1-4层
 	for(int lvl=SE3TRACKING_MAX_LEVEL-1;lvl >= SE3TRACKING_MIN_LEVEL;lvl--)
 	{
 		numCalcResidualCalls[lvl] = 0;
 		numCalcWarpUpdateCalls[lvl] = 0;
 
-		reference->makePointCloud(lvl);
-
+		reference->makePointCloud(lvl);//参考帧点云数据
+        //主要是计算残差
 		callOptimized(calcResidualAndBuffers, (reference->posData[lvl], reference->colorAndVarData[lvl], \
 			SE3TRACKING_MIN_LEVEL == lvl ? reference->pointPosInXYGrid[lvl] : 0, \
 			reference->numData[lvl], frame, referenceToFrame, lvl, (plotTracking && lvl == SE3TRACKING_MIN_LEVEL)));
@@ -755,6 +760,7 @@ float SE3Tracker::calcWeightsAndResidualNEON(
 float SE3Tracker::calcWeightsAndResidual(
 		const Sophus::SE3f& referenceToFrame)
 {
+    //参考帧到当前帧的平移
 	float tx = referenceToFrame.translation()[0];
 	float ty = referenceToFrame.translation()[1];
 	float tz = referenceToFrame.translation()[2];
@@ -763,13 +769,16 @@ float SE3Tracker::calcWeightsAndResidual(
 
 	for(int i=0;i<buf_warped_size;i++)
 	{
+	    //参考帧在当前帧的投影坐标
 		float px = *(buf_warped_x+i);	// x'
 		float py = *(buf_warped_y+i);	// y'
 		float pz = *(buf_warped_z+i);	// z'
-		float d = *(buf_d+i);	// d 逆深度
-		float rp = *(buf_warped_residual+i); // r_p
+		
+		float d = *(buf_d+i);	// 投影点在参考关键帧中的逆深度
+		float rp = *(buf_warped_residual+i); // r_p 残差
 		float gx = *(buf_warped_dx+i);	// \delta_x I
 		float gy = *(buf_warped_dy+i);  // \delta_y I
+		//逆深度方差
 		float s = settings.var_weight * *(buf_idepthVar+i);	// \sigma_d^2
 
 
@@ -780,7 +789,7 @@ float SE3Tracker::calcWeightsAndResidual(
 
 		// calc w_p
 		float drpdd = gx * g0 + gy * g1;	// ommitting the minus
-		float w_p = 1.0f / ((cameraPixelNoise2) + s * drpdd * drpdd);
+		float w_p = 1.0f / ((cameraPixelNoise2) + s * drpdd * drpdd);//
 
 		float weighted_rp = fabs(rp*sqrtf(w_p));
 
@@ -887,15 +896,15 @@ float SE3Tracker::calcResidualAndBuffersNEON(
 }
 #endif
 
-
+//计算残差
 float SE3Tracker::calcResidualAndBuffers(
 		const Eigen::Vector3f* refPoint,//参考帧的3D点
-		const Eigen::Vector2f* refColVar,//参考帧的像素点以及逆深度方差
-		int* idxBuf,//有效像素索引
-		int refNum, //有效像素
-		Frame* frame,//当前
-		const Sophus::SE3f& referenceToFrame,//Tlr
-		int level,
+		const Eigen::Vector2f* refColVar,//参考帧的像素点的值以及逆深度方差
+		int* idxBuf,//参考帧有效像素索引
+		int refNum, //参考帧有效像素个数
+		Frame* frame,//当前最新帧
+		const Sophus::SE3f& referenceToFrame,//Tcr
+		int level, //金字塔层
 		bool plotResidual)
 {
 	calcResidualAndBuffers_debugStart();
@@ -911,8 +920,9 @@ float SE3Tracker::calcResidualAndBuffers(
 	float fy_l = KLvl(1,1);
 	float cx_l = KLvl(0,2);
 	float cy_l = KLvl(1,2);
-    //Rlr
+    //Rcr
 	Eigen::Matrix3f rotMat = referenceToFrame.rotationMatrix();
+	//tcr
 	Eigen::Vector3f transVec = referenceToFrame.translation();
 	
 	const Eigen::Vector3f* refPoint_max = refPoint + refNum;
@@ -939,26 +949,29 @@ float SE3Tracker::calcResidualAndBuffers(
 
 	for(;refPoint<refPoint_max; refPoint++, refColVar++, idxBuf++)
 	{
-        //Rlr  tlr
+        //Rcr  tcr
 		Eigen::Vector3f Wxp = rotMat * (*refPoint) + transVec; //参考帧中的点，投影到当前帧
+		//投影点在当前帧的像素坐标
 		float u_new = (Wxp[0]/Wxp[2])*fx_l + cx_l;
 		float v_new = (Wxp[1]/Wxp[2])*fy_l + cy_l;
 
 		// step 1a: coordinates have to be in image:
 		// (inverse test to exclude NANs)
-		if(!(u_new > 1 && v_new > 1 && u_new < w-2 && v_new < h-2))
+		if(!(u_new > 1 && v_new > 1 && u_new < w-2 && v_new < h-2))//投影点是否在图像内
 		{
 			if(isGoodOutBuffer != 0)
 				isGoodOutBuffer[*idxBuf] = false;
 			continue;
 		}
-        //插值得到亚像素级的深度和像素亮度
+        //插值得到亚像素级的梯度。
 		Eigen::Vector3f resInterp = getInterpolatedElement43(frame_gradients, u_new, v_new, w);
 
 		float c1 = affineEstimation_a * (*refColVar)[0] + affineEstimation_b;
 		float c2 = resInterp[2];
-		float residual = c1 - c2; //得到像素在参考帧和当前帧的亮度差
+		//亮度残差
+		float residual = c1 - c2; 
 
+		//残差的权重与残差值成反比的关系。残差越大，权重越小
 		float weight = fabsf(residual) < 5.0f ? 1 : 5.0f / fabsf(residual);
 		sxx += c1*c1*weight;
 		syy += c2*c2*weight;
@@ -970,29 +983,30 @@ float SE3Tracker::calcResidualAndBuffers(
 
 		if(isGoodOutBuffer != 0)
 			isGoodOutBuffer[*idxBuf] = isGood;
-
+        //记录参考关键帧到当前帧的投影3D坐标
 		*(buf_warped_x+idx) = Wxp(0);
 		*(buf_warped_y+idx) = Wxp(1);
 		*(buf_warped_z+idx) = Wxp(2);
-
+         //梯度 ，这里多乘了一个焦距 
 		*(buf_warped_dx+idx) = fx_l * resInterp[0];
 		*(buf_warped_dy+idx) = fy_l * resInterp[1];
+		// 亮度的残差
 		*(buf_warped_residual+idx) = residual;
 
-		*(buf_d+idx) = 1.0f / (*refPoint)[2];   //逆深度
-		*(buf_idepthVar+idx) = (*refColVar)[1]; //逆深度方差
+		*(buf_d+idx) = 1.0f / (*refPoint)[2];   //参考帧的逆深度
+		*(buf_idepthVar+idx) = (*refColVar)[1]; //参考帧的逆深度方差
 		idx++;
 
 
 		if(isGood)
 		{
-			sumResUnweighted += residual*residual;
-			sumSignedRes += residual;
+			sumResUnweighted += residual*residual;//方差的平方和
+			sumSignedRes += residual; //误差和
 			goodCount++;
 		}
 		else
 			badCount++;
-        //空间点的Z坐标在参考帧 与 在当前帧的比
+        //参考帧的Z坐标值与当前帧的z值的比较
 		float depthChange = (*refPoint)[2] / Wxp[2];	// if depth becomes larger: pixel becomes "smaller", hence count it less.
 		usageCount += depthChange < 1 ? depthChange : 1;
 
@@ -1025,7 +1039,7 @@ float SE3Tracker::calcResidualAndBuffers(
 	lastGoodCount = goodCount;
 	lastBadCount = badCount;
 	lastMeanRes = sumSignedRes / goodCount;
-
+    //这里的理论不清楚
 	affineEstimation_a_lastIt = sqrtf((syy - sy*sy/sw) / (sxx - sx*sx/sw));
 	affineEstimation_b_lastIt = (sy - affineEstimation_a_lastIt*sx)/sw;
 

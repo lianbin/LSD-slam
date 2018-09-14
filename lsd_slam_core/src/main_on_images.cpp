@@ -174,7 +174,7 @@ int main( int argc, char** argv )
 
 
 	// make slam system
-	SlamSystem* system = new SlamSystem(w, h, K, doSlam);
+	SlamSystem* system = new SlamSystem(w, h, K, doSlam);//初始化系统
 	system->setVisualization(outputWrapper);
 
 
@@ -221,6 +221,7 @@ int main( int argc, char** argv )
 
 	for(unsigned int i=0;i<files.size();i++)
 	{
+	    //读图像
 		cv::Mat imageDist = cv::imread(files[i], CV_LOAD_IMAGE_GRAYSCALE);
 
 		if(imageDist.rows != h_inp || imageDist.cols != w_inp)
@@ -238,9 +239,9 @@ int main( int argc, char** argv )
 		undistorter->undistort(imageDist, image);
 		assert(image.type() == CV_8U);
 
-		if(runningIDX == 0)
+		if(runningIDX == 0)//如果没有初始化，先进行初始化
 			system->randomInit(image.data, fakeTimeStamp, runningIDX);
-		else
+		else               //跟踪
 			system->trackFrame(image.data, runningIDX ,hz == 0,fakeTimeStamp);
 		runningIDX++;
 		fakeTimeStamp+=0.03;

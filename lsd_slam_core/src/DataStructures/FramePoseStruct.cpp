@@ -95,12 +95,12 @@ Sim3 FramePoseStruct::getCamToWorld(int recursionDepth)
 		return camToWorld;
 
 	// return id if there is no parent (very first frame)
-	if(trackingParent == nullptr)
+	if(trackingParent == nullptr) //如果没有参考帧关键帧，则返回旋转为单位阵，平移为0
 		return camToWorld = Sim3();
 
 	// abs. pose is computed from the parent's abs. pose, and cached.
 	cacheValidFor = cacheValidCounter;
-
+    //递归 得到Twc w-世界   c-本帧
 	return camToWorld = trackingParent->getCamToWorld(recursionDepth+1) * thisToParent_raw;
 }
 

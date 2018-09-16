@@ -341,17 +341,18 @@ SE3 SE3Tracker::trackFrame(
 			affineEstimation_a = affineEstimation_a_lastIt;
 			affineEstimation_b = affineEstimation_b_lastIt;
 		}
-		float lastErr = callOptimized(calcWeightsAndResidual,(referenceToFrame));
+		//主要计算权重
+		float lastErr = callOptimized(calcWeightsAndResidual,(referenceToFrame));//返回的是残差平方和的均值
 
 		numCalcResidualCalls[lvl]++;
 
 
-		float LM_lambda = settings.lambdaInitial[lvl];
-
+		float LM_lambda = settings.lambdaInitial[lvl];//默认值是零
+        //const int maxIterations[6] = {5, 20, 50, 100, 100, 100};
 		for(int iteration=0; iteration < settings.maxItsPerLvl[lvl]; iteration++)
 		{
 
-			callOptimized(calculateWarpUpdate,(ls));
+			callOptimized(calculateWarpUpdate,(ls)); //构建Hx=b的H矩阵与b向量
 
 			numCalcWarpUpdateCalls[lvl]++;
 
@@ -364,11 +365,11 @@ SE3 SE3Tracker::trackFrame(
 				Vector6 b = -ls.b;
 				Matrix6x6 A = ls.A;
 				for(int i=0;i<6;i++) A(i,i) *= 1+LM_lambda;
-				Vector6 inc = A.ldlt().solve(b);
+				Vector6 inc = A.ldlt().solve(b);//计算增量
 				incTry++;
 
 				// apply increment. pretty sure this way round is correct, but hard to test.
-				Sophus::SE3f new_referenceToFrame = Sophus::SE3f::exp((inc)) * referenceToFrame;
+				Sophus::SE3f new_referenceToFrame = Sophus::SE3f::exp((inc)) * referenceToFrame;//更新位姿
 				//Sophus::SE3f new_referenceToFrame = referenceToFrame * Sophus::SE3f::exp((inc));
 
 
@@ -386,7 +387,7 @@ SE3 SE3Tracker::trackFrame(
 
 
 				// accept inc?
-				if(error < lastErr)
+				if(error < lastErr)//误差变小了
 				{
 					// accept inc
 					referenceToFrame = new_referenceToFrame;
@@ -409,14 +410,14 @@ SE3 SE3Tracker::trackFrame(
 					}
 
 					// converged?
-					if(error / lastErr > settings.convergenceEps[lvl])
-					{
+					if(error / lastErr > settings.convergenceEps[lvl])//因为误差是变小的，所以error / lastErr一定小于1.  这里大于settings.convergenceEps[lvl]
+					{                                                 //说明，本次迭代之后，误差基本已经趋于稳定
 						if(enablePrintDebugInfo && printTrackingIterationInfo)
 						{
 							printf("(%d-%d): FINISHED pyramid level (last residual reduction too small).\n",
 									lvl,iteration);
 						}
-						iteration = settings.maxItsPerLvl[lvl];
+						iteration = settings.maxItsPerLvl[lvl];//收敛之后，停止迭代
 					}
 
 					last_residual = lastErr = error;
@@ -429,7 +430,7 @@ SE3 SE3Tracker::trackFrame(
 
 					break;
 				}
-				else
+				else 
 				{
 					if(enablePrintDebugInfo && printTrackingIterationInfo)
 					{
@@ -437,7 +438,7 @@ SE3 SE3Tracker::trackFrame(
 								lvl,iteration, sqrt(inc.dot(inc)), LM_lambda, lastErr, error);
 					}
 
-					if(!(inc.dot(inc) > settings.stepSizeMin[lvl]))
+					if(!(inc.dot(inc) > settings.stepSizeMin[lvl])) //1e-8  ,增量基本为0
 					{
 						if(enablePrintDebugInfo && printTrackingIterationInfo)
 						{
@@ -492,7 +493,7 @@ SE3 SE3Tracker::trackFrame(
 	frame->pose->thisToParent_raw = sim3FromSE3(toSophus(referenceToFrame.inverse()),1);
     //当前帧的参考帧的位姿
 	frame->pose->trackingParent = reference->keyframe->pose;
-	return toSophus(referenceToFrame.inverse());
+	return toSophus(referenceToFrame.inverse());//Trc
 }
 
 
@@ -757,6 +758,7 @@ float SE3Tracker::calcWeightsAndResidualNEON(
 #endif
 
 //Tcr
+//本函数主要用于更新权重
 float SE3Tracker::calcWeightsAndResidual(
 		const Sophus::SE3f& referenceToFrame)
 {
@@ -788,20 +790,20 @@ float SE3Tracker::calcWeightsAndResidual(
 
 
 		// calc w_p
-		float drpdd = gx * g0 + gy * g1;	// ommitting the minus
-		float w_p = 1.0f / ((cameraPixelNoise2) + s * drpdd * drpdd);//
+		float drpdd = gx * g0 + gy * g1;	// ommitting the minus 残差对逆深度的导数的平方
+		float w_p = 1.0f / ((cameraPixelNoise2) + s * drpdd * drpdd);//分母是公式14
 
 		float weighted_rp = fabs(rp*sqrtf(w_p));
-
+        //求huber函数-得到huber-weight
 		float wh = fabs(weighted_rp < (settings.huber_d/2) ? 1 : (settings.huber_d/2) / weighted_rp);
 
-		sumRes += wh * w_p * rp*rp;
+		sumRes += wh * w_p * rp*rp;//公式12
 
 
-		*(buf_weight_p+i) = wh * w_p;
+		*(buf_weight_p+i) = wh * w_p;//每一个误差项平方的权重 (最小二乘的权重)
 	}
 
-	return sumRes / buf_warped_size;
+	return sumRes / buf_warped_size;//均方差
 }
 
 
@@ -1274,7 +1276,7 @@ void SE3Tracker::calculateWarpUpdateNEON(
 }
 #endif
 
-
+//
 void SE3Tracker::calculateWarpUpdate(
 		LGS6 &ls)
 {
@@ -1283,7 +1285,7 @@ void SE3Tracker::calculateWarpUpdate(
 //	weightEstimator.calcWeights(buf_warped_residual, buf_warped_weights, buf_warped_size);
 //
 	ls.initialize(width*height);
-	for(int i=0;i<buf_warped_size;i++)
+	for(int i=0;i<buf_warped_size;i++)//所有残差对于位姿的导数
 	{
 		float px = *(buf_warped_x+i);
 		float py = *(buf_warped_y+i);

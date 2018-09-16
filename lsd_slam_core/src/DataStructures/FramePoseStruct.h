@@ -35,11 +35,11 @@ public:
 	virtual ~FramePoseStruct();
 
 	// parent, the frame originally tracked on. never changes.
-	FramePoseStruct* trackingParent;
+	FramePoseStruct* trackingParent; //本帧的参考帧的位姿
 
 	// set initially as tracking result (then it's a SE(3)),
 	// and is changed only once, when the frame becomes a KF (->rescale).
-	Sim3 thisToParent_raw;
+	Sim3 thisToParent_raw; //Src r-参考帧 c-本帧
 
 
 	int frameID;

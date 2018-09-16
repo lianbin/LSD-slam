@@ -201,12 +201,17 @@ void SlamSystem::mergeOptimizationOffset()
 		publishKeyframeGraph();
 }
 
+//建图线程总的来讲分为两种情况
+//1 构建关键帧，则构建关键帧的深度图，以及关键帧之间的深度传播
+//2 不构建关键帧，则使用最新的普通帧更新参考关键帧的深度图
 
 
+//在跟踪线程中，参考帧是指当前关键帧
+//在建图线程中，把与关键帧做立体匹配的图像帧称为参考帧（Reference Frame）。
 void SlamSystem::mappingThreadLoop()
 {
 	printf("Started mapping thread!\n");
-	while(keepRunning)
+	while(keepRunning)//
 	{
 		if (!doMappingIteration())
 		{
@@ -568,13 +573,13 @@ bool SlamSystem::updateKeyframe()
 			references.push_back(unmappedTrackedFrames[i]);
 
 		std::shared_ptr<Frame> popped = unmappedTrackedFrames.front();
-		unmappedTrackedFrames.pop_front();   //把最老的图像帧剔除。因为本次会在updateKeyframe
+		unmappedTrackedFrames.pop_front();   //把最老的(距离当前关键帧最近)图像帧剔除。因为本次会在updateKeyframe
 		                                     //用来建图，下次就用不上了。
 		unmappedTrackedFramesMutex.unlock();
 
 		if(enablePrintDebugInfo && printThreadingInfo)
 			printf("MAPPING %d on %d to %d (%d frames)\n", currentKeyFrame->id(), references.front()->id(), references.back()->id(), (int)references.size());
-		//用最近一次观测取更新当前关键帧的深度（observeDepth）
+		//用最近一次观测去更新当前关键帧的深度（observeDepth）
 	    //对得到的深度图进行一次填补（regularizeDepthMapFillHoles）
 		//计算平均深度图（regularizeDepthMap）
 
@@ -748,7 +753,7 @@ void SlamSystem::takeRelocalizeResult()
 
 bool SlamSystem::doMappingIteration()
 {
-	if(currentKeyFrame == 0)
+	if(currentKeyFrame == 0)//
 		return false;
 
 	if(!doMapping && currentKeyFrame->idxInKeyframes < 0)
@@ -789,7 +794,7 @@ bool SlamSystem::doMappingIteration()
 			return false;
 		}
 
-
+        //主要是以下两个分支
 		if (createNewKeyFrame)//需要添加新的关键帧
 		{
 			finishCurrentKeyframe();
@@ -801,7 +806,7 @@ bool SlamSystem::doMappingIteration()
 		}
 		else     //不需要更新关键帧
 		{
-			bool didSomething = updateKeyframe();
+			bool didSomething = updateKeyframe();//利用参考帧更新关键帧
 
 			if (displayDepthMap || depthMapScreenshotFlag)
 				debugDisplayDepthMap();
@@ -943,8 +948,8 @@ void SlamSystem::trackFrame(uchar* image, unsigned int frameID, bool blockUntilM
 
 	struct timeval tv_start, tv_end;
 	gettimeofday(&tv_start, NULL);
-
-	SE3 newRefToFrame_poseUpdate = tracker->trackFrame(
+    //Trc c-current r-refrence
+	SE3 newRefToFrame_poseUpdate = tracker->trackFrame(//优化
 			trackingReference,
 			trackingNewFrame.get(),
 			frameToReference_initialEstimate);
@@ -998,7 +1003,7 @@ void SlamSystem::trackFrame(uchar* image, unsigned int frameID, bool blockUntilM
 		outputWrapper->publishDebugInfo(data);
 	}
 
-	keyFrameGraph->addFrame(trackingNewFrame.get());
+	keyFrameGraph->addFrame(trackingNewFrame.get());//新的一帧加入到位姿图中
 
 
 	//Sim3 lastTrackedCamToWorld = mostCurrentTrackedFrame->getScaledCamToWorld();//  mostCurrentTrackedFrame->TrackingParent->getScaledCamToWorld() * sim3FromSE3(mostCurrentTrackedFrame->thisToParent_SE3TrackingResult, 1.0);
@@ -1011,8 +1016,12 @@ void SlamSystem::trackFrame(uchar* image, unsigned int frameID, bool blockUntilM
 	// Keyframe selection
 	//两个条件判断，是否需要创建新的关键帧
 	latestTrackedFrame = trackingNewFrame;
+	//numMappedOnThisTotal是，已经用于更新当前关键帧的深度图的帧个数
 	if (!my_createNewKeyframe && currentKeyFrame->numMappedOnThisTotal > MIN_NUM_MAPPED)
 	{
+	    //trc 相当于从参考帧到当前帧的平移(位移)
+	    //位移*平均深度 作为运动的距离。当场景相对较大的时候，由于是采用的逆深度，所以meanIdepth相对比较小。
+	    //小场景的时候，meanIdepth的值反而比较大，这相当于一个权重，对于相同的位移，认为小场景的运动程度比较大。
 		Sophus::Vector3d dist = newRefToFrame_poseUpdate.translation() * currentKeyFrame->meanIdepth;
 		float minVal = fmin(0.2f + keyFrameGraph->keyframesAll.size() * 0.8f / INITIALIZATION_PHASE_COUNT,1.0f);
 

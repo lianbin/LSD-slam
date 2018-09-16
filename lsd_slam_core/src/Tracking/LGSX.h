@@ -186,7 +186,8 @@ class LGS6
 public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
 
-  Matrix6x6 A;
+  Matrix6x6 A;//比如所有的残差组成一个n*1的矩阵（n个残差），求雅克比是分子布局，所以得到的J=n*6（6个自由度）
+              //J^tJ = (6*n )*(n*6) = 6*6 
   Vector6 b;
 
   float error;
@@ -315,7 +316,7 @@ public:
 #endif
   }
 
-
+  //本函数是为了将矩阵H和b都同时除以约束的个数，不知道原理是什么
   void finish()
   {
     finishNoDivide();
@@ -389,9 +390,9 @@ public:
 
   inline void update(const Vector6& J, const float& res, const float& weight)
   {
-    A.noalias() += J * J.transpose() * weight;
-    b.noalias() -= J * (res * weight);
-    error += res * res * weight;
+    A.noalias() += J * J.transpose() * weight;//更新H矩阵
+    b.noalias() -= J * (res * weight);//更新b
+    error += res * res * weight;//误差项累计
     num_constraints += 1;
   }
 

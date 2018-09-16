@@ -370,7 +370,7 @@ public:
 
 		for (int level = 0; level < PYRAMID_LEVELS; ++ level)
 		{
-			lambdaInitial[level] = 0;
+			lambdaInitial[level] = 0;//用于LM算法(H+λI)
 			stepSizeMin[level] = stepSizeMinc[level];
 			convergenceEps[level] = 0.999f;
 			maxItsPerLvl[level] = maxIterations[level];

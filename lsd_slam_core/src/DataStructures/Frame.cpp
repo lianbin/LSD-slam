@@ -295,11 +295,12 @@ void Frame::setDepthFromGroundTruth(const float* depth, float cov_scale)
 	data.hasIDepthBeenSet = true;
 }
 
+
 //frame->prepareForStereoWith(activeKeyFrame, refToKf, K, 0);
 //other 是参考关键帧 
 void Frame::prepareForStereoWith(Frame* other, Sim3 thisToOther, const Eigen::Matrix3f& K, const int level)
 {
-	Sim3 otherToThis = thisToOther.inverse();
+	Sim3 otherToThis = thisToOther.inverse(); //Trk
 
 	//otherToThis = data.worldToCam * other->data.camToWorld;
 	K_otherToThis_R = K * otherToThis.rotationMatrix().cast<float>() * otherToThis.scale();

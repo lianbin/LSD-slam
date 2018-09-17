@@ -120,6 +120,8 @@ void DepthMap::observeDepthRow(int yMin, int yMax, RunningStats* stats)
 		{
 			int idx = x+y*width;
 			DepthMapPixelHypothesis* target = currentDepthMap+idx;//像素深度
+			//临时理解：当进行关键帧到关键帧的传递的时候，新的关键帧可能会存在很多
+			//没有先验的像素点。
 			bool hasHypothesis = target->isValid;
 
 			// ======== 1. check absolute grad =========
@@ -137,6 +139,7 @@ void DepthMap::observeDepthRow(int yMin, int yMax, RunningStats* stats)
 			bool success;
 			if(!hasHypothesis)//如果本像素，还没有先验
 				success = observeDepthCreate(x, y, idx, stats);//针对的是一个像素。得到一个像素的逆深度和方差
+            //在已经存在先验的话，则进行深度的融合
 			else
 				//参考帧的选取
                 //极线搜索范围
@@ -301,7 +304,7 @@ bool DepthMap::observeDepthCreate(const int &x, const int &y, const int &idx, Ru
 	float new_u = x;
 	float new_v = y;
 	float result_idepth, result_var, result_eplLength;
-	float error = doLineStereo(//立体匹配
+	float error = doLineStereo(//立体匹配,得到像素点new_u new_v 的逆深度 逆深度方差
 			new_u,new_v,epx,epy,
 			0.0f, 1.0f, 1.0f/MIN_DEPTH,
 			refFrame, refFrame->image(0),
@@ -319,7 +322,7 @@ bool DepthMap::observeDepthCreate(const int &x, const int &y, const int &idx, Ru
 	result_idepth = UNZERO(result_idepth);
 
 	// add hypothesis
-	*target = DepthMapPixelHypothesis(
+	*target = DepthMapPixelHypothesis(//生成逆深度像素点
 			result_idepth,
 			result_var,
 			VALIDITY_COUNTER_INITIAL_OBSERVE);
@@ -372,7 +375,7 @@ bool DepthMap::observeDepthUpdate(const int &x, const int &y, const int &idx, co
 	}
 
 	float epx, epy;
-	bool isGood = makeAndCheckEPL(x, y, refFrame, &epx, &epy, stats);
+	bool isGood = makeAndCheckEPL(x, y, refFrame, &epx, &epy, stats);//计算对极线
 	if(!isGood) return false;
 
 	// which exact point to track, and where from.
@@ -558,9 +561,9 @@ void DepthMap::propagateDepth(Frame* new_keyframe)
 	const bool* trackingWasGood = new_keyframe->getTrackingParent() == activeKeyFrame ? new_keyframe->refPixelWasGoodNoCreate() : 0;
 
 
-	const float* activeKFImageData = activeKeyFrame->image(0);
-	const float* newKFMaxGrad = new_keyframe->maxGradients(0);
-	const float* newKFImageData = new_keyframe->image(0);
+	const float* activeKFImageData = activeKeyFrame->image(0);//获取图像
+	const float* newKFMaxGrad = new_keyframe->maxGradients(0);//梯度幅值
+	const float* newKFImageData = new_keyframe->image(0);     //新的关键帧的图像
 
 
 
@@ -578,8 +581,9 @@ void DepthMap::propagateDepth(Frame* new_keyframe)
 			if(enablePrintDebugInfo) runningStats.num_prop_attempts++;
 
             //将当前关键帧中的3D点，变换到新的关键帧坐标系下
+            //Pn = Rnk*Pk +tnk
 			Eigen::Vector3f pn = (trafoInv_R * Eigen::Vector3f(x*fxi + cxi,y*fyi + cyi,1.0f)) / source->idepth_smoothed + trafoInv_t;
-
+   
 			float new_idepth = 1.0f / pn[2];//得到新的深度值
 
 			float u_new = pn[0]*new_idepth*fx + cx;//在新的关键帧图像中的像素位置
@@ -593,8 +597,8 @@ void DepthMap::propagateDepth(Frame* new_keyframe)
 				continue;
 			}
 
-			int newIDX = (int)(u_new+0.5f) + ((int)(v_new+0.5f))*width;
-			float destAbsGrad = newKFMaxGrad[newIDX];
+			int newIDX = (int)(u_new+0.5f) + ((int)(v_new+0.5f))*width; //投影到新关键帧中的像素坐标
+			float destAbsGrad = newKFMaxGrad[newIDX];//像素梯度
 
 			if(trackingWasGood != 0)
 			{
@@ -607,12 +611,12 @@ void DepthMap::propagateDepth(Frame* new_keyframe)
 			}
 			else
 			{
-				float sourceColor = activeKFImageData[x + y*width];
-				float destColor = getInterpolatedElement(newKFImageData, u_new, v_new, width);
+				float sourceColor = activeKFImageData[x + y*width]; //旧的关键帧的像素值
+				float destColor = getInterpolatedElement(newKFImageData, u_new, v_new, width);//新的关键帧的像素值
 
-				float residual = destColor - sourceColor;
+				float residual = destColor - sourceColor;//光度误差
 
-
+ 
 				if(residual*residual / (MAX_DIFF_CONSTANT + MAX_DIFF_GRAD_MULT*destAbsGrad*destAbsGrad) > 1.0f || destAbsGrad < MIN_ABS_GRAD_DECREASE)
 				{
 					if(enablePrintDebugInfo) runningStats.num_prop_removed_colorDiff++;
@@ -624,14 +628,14 @@ void DepthMap::propagateDepth(Frame* new_keyframe)
 
 			// large idepth = point is near = large increase in variance.
 			// small idepth = point is far = small increase in variance.
-			float idepth_ratio_4 = new_idepth / source->idepth_smoothed; //公式15
+			float idepth_ratio_4 = new_idepth / source->idepth_smoothed; //公式15(Semi-Dense Visual Odometry for a Monocular Camera)
 			idepth_ratio_4 *= idepth_ratio_4;
 			idepth_ratio_4 *= idepth_ratio_4;
 
 			float new_var =idepth_ratio_4*source->idepth_var;//深度传递不确定性
 
-
-			// check for occlusion
+            //下面这块不是很明白，什么情况下，会出现老的关键帧，重复投影到新关键帧相同的像素上
+			// check for occlusion  检查遮挡
 			if(targetBest->isValid)
 			{
 				// if they occlude one another, one gets removed.
@@ -716,7 +720,7 @@ void DepthMap::regularizeDepthMapFillHolesRow(int yMin, int yMax, RunningStats* 
 		for(int x=3;x<width-2;x++)
 		{
 			int idx = x+y*width;
-			DepthMapPixelHypothesis* dest = otherDepthMap + idx;
+			DepthMapPixelHypothesis* dest = otherDepthMap + idx;//深度图的像素索引
 			if(dest->isValid) continue;
 			if(keyFrameMaxGradBuf[idx]<MIN_ABS_GRAD_DECREASE) continue;
 
@@ -762,7 +766,7 @@ void DepthMap::regularizeDepthMapFillHoles()
 	buildRegIntegralBuffer();
 
 	runningStats.num_reg_created=0;
-
+    //复制，将当前的深度图复制给otherDepthMap
 	memcpy(otherDepthMap,currentDepthMap,width*height*sizeof(DepthMapPixelHypothesis));
 	threadReducer.reduce(boost::bind(&DepthMap::regularizeDepthMapFillHolesRow, this, _1, _2, _3), 3, height-2, 10);
 	if(enablePrintDebugInfo && printFillHolesStatistics)
@@ -786,7 +790,7 @@ void DepthMap::buildRegIntegralBufferRow1(int yMin, int yMax, RunningStats* stat
 			if(ptSrc->isValid)
 				validityIntegralBufferSUM += ptSrc->validity_counter;//总的有效个数
 
-			*(validityIntegralBufferPT++) = validityIntegralBufferSUM;//积分图
+			*(validityIntegralBufferPT++) = validityIntegralBufferSUM;//积分图(深度图有效个数的统计)
 			ptSrc++;
 		}
 	}
@@ -831,7 +835,7 @@ template<bool removeOcclusions> void DepthMap::regularizeDepthMapRow(int validit
 			
 			float sum=0, val_sum=0, sumIvar=0;//, min_varObs = 1e20;
 			int numOccluding = 0, numNotOccluding = 0;
-
+            
 			for(int dx=-regularize_radius; dx<=regularize_radius;dx++)
 				for(int dy=-regularize_radius; dy<=regularize_radius;dy++)
 				{
@@ -1187,7 +1191,7 @@ void DepthMap::updateKeyframe(std::deque< std::shared_ptr<Frame> > referenceFram
 	//if(rand()%10==0)
 	{
 		gettimeofday(&tv_start, NULL);
-		regularizeDepthMapFillHoles();
+		regularizeDepthMapFillHoles();//填补深度图(没有仔细看)
 		gettimeofday(&tv_end, NULL);
 		msFillHoles = 0.9*msFillHoles + 0.1*((tv_end.tv_sec-tv_start.tv_sec)*1000.0f + (tv_end.tv_usec-tv_start.tv_usec)/1000.0f);
 		nFillHoles++;
@@ -1195,7 +1199,7 @@ void DepthMap::updateKeyframe(std::deque< std::shared_ptr<Frame> > referenceFram
 
 
 	gettimeofday(&tv_start, NULL);
-	regularizeDepthMap(false, VAL_SUM_MIN_FOR_KEEP);
+	regularizeDepthMap(false, VAL_SUM_MIN_FOR_KEEP);//没仔细看
 	gettimeofday(&tv_end, NULL);
 	msRegularize = 0.9*msRegularize + 0.1*((tv_end.tv_sec-tv_start.tv_sec)*1000.0f + (tv_end.tv_usec-tv_start.tv_usec)/1000.0f);
 	nRegularize++;
@@ -1336,7 +1340,12 @@ void DepthMap::createKeyFrame(Frame* new_keyframe)
 
 
 
-
+    //对深度图做归一化处理(使有效点的逆深度均值为1)
+    //E(d) = sumIdepth/numIdepth
+    //(numIdepth/sumIdepth)E(d) = (numIdepth/sumIdepth) (sumIdepth/numIdepth) = 1
+    //E((numIdepth/sumIdepth)d) = 1;
+    //所以为了使均值为1 ，则每个深度上乘以系数 numIdepth/sumIdepth
+	//d的方差为δ^2。则(numIdepth/sumIdepth)d的方差为(numIdepth/sumIdepth)δ^2(numIdepth/sumIdepth)
 	// make mean inverse depth be one.
 	float sumIdepth=0, numIdepth=0;
 	for(DepthMapPixelHypothesis* source = currentDepthMap; source < currentDepthMap+width*height; source++)
@@ -1352,18 +1361,19 @@ void DepthMap::createKeyFrame(Frame* new_keyframe)
 	{
 		if(!source->isValid)
 			continue;
-		source->idepth *= rescaleFactor;
+		source->idepth *= rescaleFactor;//归一化之后的深度值
 		source->idepth_smoothed *= rescaleFactor;
-		source->idepth_var *= rescaleFactor2;
+		source->idepth_var *= rescaleFactor2; //归一化之后的方差
 		source->idepth_var_smoothed *= rescaleFactor2;
 	}
+	//Tkn
 	activeKeyFrame->pose->thisToParent_raw = sim3FromSE3(oldToNew_SE3.inverse(), rescaleFactor);
 	activeKeyFrame->pose->invalidateCache();
 
 	// Update depth in keyframe
 
 	gettimeofday(&tv_start, NULL);
-	activeKeyFrame->setDepth(currentDepthMap);
+	activeKeyFrame->setDepth(currentDepthMap);//将当前的深度图复制给当前的关键帧
 	gettimeofday(&tv_end, NULL);
 	msSetDepth = 0.9*msSetDepth + 0.1*((tv_end.tv_sec-tv_start.tv_sec)*1000.0f + (tv_end.tv_usec-tv_start.tv_usec)/1000.0f);
 	nSetDepth++;
@@ -1437,7 +1447,7 @@ void DepthMap::finalizeKeyFrame()
 	nRegularize++;
 
 	gettimeofday(&tv_start, NULL);
-	activeKeyFrame->setDepth(currentDepthMap);
+	activeKeyFrame->setDepth(currentDepthMap);//更换关键帧之前，将当前的深度图复制给当前关键帧
 	activeKeyFrame->calculateMeanInformation();
 	activeKeyFrame->takeReActivationData(currentDepthMap);
 	gettimeofday(&tv_end, NULL);
@@ -1974,7 +1984,7 @@ inline float DepthMap::doLineStereo(
 		float dot0 = KinvP.dot(referenceFrame->otherToThis_R_row0);
 		float dot2 = KinvP.dot(referenceFrame->otherToThis_R_row2);
 
-		idnew_best_match = (dot0 - oldX*dot2) / nominator;
+		idnew_best_match = (dot0 - oldX*dot2) / nominator;//计算深度
 		alpha = incx*fxi*(dot0*referenceFrame->otherToThis_t[2] - dot2*referenceFrame->otherToThis_t[0]) / (nominator*nominator);
 
 	}
@@ -2007,14 +2017,14 @@ inline float DepthMap::doLineStereo(
 	// ================= calc var (in NEW image) ====================//计算方差
 
 	// calculate error from photometric noise
-	float photoDispError = 4.0f * cameraPixelNoise2 / (gradAlongLine + DIVISION_EPS);
+	float photoDispError = 4.0f * cameraPixelNoise2 / (gradAlongLine + DIVISION_EPS);//光度误差
 
 	float trackingErrorFac = 0.25f*(1.0f+referenceFrame->initialTrackedResidual);
 
 	// calculate error from geometric noise (wrong camera pose / calibration)
-	//？？？这里的梯度，按照论文上的理解，应该是参考帧上的，而不是关键帧上的
+	//????这里的梯度，按照论文上的理解，应该是参考帧上的，而不是关键帧上的
 	Eigen::Vector2f gradsInterp = getInterpolatedElement42(activeKeyFrame->gradients(0), u, v, width);
-	float geoDispError = (gradsInterp[0]*epxn + gradsInterp[1]*epyn) + DIVISION_EPS;
+	float geoDispError = (gradsInterp[0]*epxn + gradsInterp[1]*epyn) + DIVISION_EPS;//计算几何误差
 	geoDispError = trackingErrorFac*trackingErrorFac*(gradsInterp[0]*gradsInterp[0] + gradsInterp[1]*gradsInterp[1]) / (geoDispError*geoDispError);
 
 

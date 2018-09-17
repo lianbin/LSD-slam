@@ -44,10 +44,10 @@ class Frame;
 
 struct TrackableKFStruct
 {
-	Frame* ref;
-	SE3 refToFrame;
-	float dist;
-	float angle;
+	Frame* ref;//候选帧
+	SE3 refToFrame;//候选帧到当前帧的变换
+	float dist;//距离
+	float angle;//角度
 };
 
 /**

@@ -34,8 +34,8 @@ TrackableKeyFrameSearch::TrackableKeyFrameSearch(KeyFrameGraph* graph, int w, in
 {
 	tracker = new SE3Tracker(w,h,K);
 
-	fowX = 2 * atanf((float)((w / K(0,0)) / 2.0f));
-	fowY = 2 * atanf((float)((h / K(1,1)) / 2.0f));
+	fowX = 2 * atanf((float)((w / K(0,0)) / 2.0f));//水平方向的视场角
+	fowY = 2 * atanf((float)((h / K(1,1)) / 2.0f));//垂直方向的视场角
 
 	msTrackPermaRef=0;
 	nTrackPermaRef=0;
@@ -52,21 +52,22 @@ TrackableKeyFrameSearch::~TrackableKeyFrameSearch()
 
 
 
-
+//(keyframe, closenessTH * 15 / (KFDistWeight*KFDistWeight), 1.0 - 0.25 * closenessTH, true)
 std::vector<TrackableKFStruct, Eigen::aligned_allocator<TrackableKFStruct> > TrackableKeyFrameSearch::findEuclideanOverlapFrames(Frame* frame, float distanceTH, float angleTH, bool checkBothScales)
 {
 	// basically the maximal angle-difference in viewing direction is angleTH*(average FoV).
 	// e.g. if the FoV is 130°, then it is angleTH*130°.
-	float cosAngleTH = cosf(angleTH*0.5f*(fowX + fowY));
+	float cosAngleTH = cosf(angleTH*0.5f*(fowX + fowY));//0.5f*(fowX + fowY)表示平均视场角 
 
 
-	Eigen::Vector3d pos = frame->getScaledCamToWorld().translation();
-	Eigen::Vector3d viewingDir = frame->getScaledCamToWorld().rotationMatrix().rightCols<1>();
+	Eigen::Vector3d pos = frame->getScaledCamToWorld().translation();//Frame在世界坐标系中的坐标
+	 // 视角：cam坐标系z轴在world坐标系中的方向（旋转矩阵的第3列只作用在z轴上
+	Eigen::Vector3d viewingDir = frame->getScaledCamToWorld().rotationMatrix().rightCols<1>();//rightCols 最右侧的列 1表示1列
 
 	std::vector<TrackableKFStruct, Eigen::aligned_allocator<TrackableKFStruct> > potentialReferenceFrames;
 
 	float distFacReciprocal = 1;
-	if(checkBothScales)
+	if(checkBothScales)// 将newkf的meanIdepth恢复到world坐标系下的尺度
 		distFacReciprocal = frame->meanIdepth / frame->getScaledCamToWorld().scale();
 
 	// for each frame, calculate the rough score, consisting of pose, scale and angle overlap.
@@ -76,18 +77,19 @@ std::vector<TrackableKFStruct, Eigen::aligned_allocator<TrackableKFStruct> > Tra
 		Eigen::Vector3d otherPos = graph->keyframesAll[i]->getScaledCamToWorld().translation();
 
 		// get distance between the frames, scaled to fit the potential reference frame.
+		  // 将reference关键帧的meanIdepth恢复到world坐标系下的尺度
 		float distFac = graph->keyframesAll[i]->meanIdepth / graph->keyframesAll[i]->getScaledCamToWorld().scale();
-		if(checkBothScales && distFacReciprocal < distFac) distFac = distFacReciprocal;
+		if(checkBothScales && distFacReciprocal < distFac) distFac = distFacReciprocal; // dist尺度统一到逆深度小的坐标系下
 		Eigen::Vector3d dist = (pos - otherPos) * distFac;
 		float dNorm2 = dist.dot(dist);
-		if(dNorm2 > distanceTH) continue;
+		if(dNorm2 > distanceTH) continue;//  // 距离不能差太大，否则不具有一致性
 
 		Eigen::Vector3d otherViewingDir = graph->keyframesAll[i]->getScaledCamToWorld().rotationMatrix().rightCols<1>();
 		float dirDotProd = otherViewingDir.dot(viewingDir);
-		if(dirDotProd < cosAngleTH) continue;
+		if(dirDotProd < cosAngleTH) continue;   // 视角角度不能差太大，否则不具有一致性
 
 		potentialReferenceFrames.push_back(TrackableKFStruct());
-		potentialReferenceFrames.back().ref = graph->keyframesAll[i];
+		potentialReferenceFrames.back().ref = graph->keyframesAll[i];//候选帧
 		potentialReferenceFrames.back().refToFrame = se3FromSim3(graph->keyframesAll[i]->getScaledCamToWorld().inverse() * frame->getScaledCamToWorld()).inverse();
 		potentialReferenceFrames.back().dist = dNorm2;
 		potentialReferenceFrames.back().angle = dirDotProd;
@@ -204,7 +206,8 @@ std::unordered_set<Frame*, std::hash<Frame*>, std::equal_to<Frame*>, Eigen::alig
 
 Frame* TrackableKeyFrameSearch::findAppearanceBasedCandidate(Frame* keyframe)
 {
-#ifdef HAVE_FABMAP
+#ifdef HAVE_FABMAP//没有定义，所以不适用FABMAP检测回环
+
 	if(!useFabMap) return nullptr;
 
 

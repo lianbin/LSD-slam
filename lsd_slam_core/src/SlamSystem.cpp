@@ -268,6 +268,7 @@ void SlamSystem::finalize()
 }
 
 
+//回环检测
 void SlamSystem::constraintSearchThreadLoop()
 {
 	printf("Started  constraint search thread!\n");
@@ -277,7 +278,7 @@ void SlamSystem::constraintSearchThreadLoop()
 
 	while(keepRunning)
 	{
-		if(newKeyFrames.size() == 0)
+		if(newKeyFrames.size() == 0)//newKeyFrames中存储所有已经构建完深度图的关键帧
 		{
 			lock.unlock();
 			keyFrameGraph->keyframesForRetrackMutex.lock();
@@ -316,13 +317,13 @@ void SlamSystem::constraintSearchThreadLoop()
 		}
 		else
 		{
-			Frame* newKF = newKeyFrames.front();
-			newKeyFrames.pop_front();
+			Frame* newKF = newKeyFrames.front();//新加入的关键帧
+			newKeyFrames.pop_front(); //从队列中剔除关键帧指针
 			lock.unlock();
 
 			struct timeval tv_start, tv_end;
 			gettimeofday(&tv_start, NULL);
-
+            //闭环检测
 			findConstraintsForNewKeyFrames(newKF, true, true, 1.0);
 			failedToRetrack=0;
 			gettimeofday(&tv_end, NULL);
@@ -361,6 +362,7 @@ void SlamSystem::constraintSearchThreadLoop()
 	printf("Exited constraint search thread \n");
 }
 
+//优化线程
 void SlamSystem::optimizationThreadLoop()
 {
 	printf("Started optimization thread \n");
@@ -1241,6 +1243,8 @@ void SlamSystem::testConstraint(
 	e2_out->robustKernel->setDelta(kernelDelta);
 }
 
+//
+	//	findConstraintsForNewKeyFrames(newKF, true, true, 1.0);
 int SlamSystem::findConstraintsForNewKeyFrames(Frame* newKeyFrame, bool forceParent, bool useFABMAP, float closeCandidatesTH)
 {
 	if(!newKeyFrame->hasTrackingParent())
@@ -1262,6 +1266,7 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame* newKeyFrame, bool forcePar
 	// =============== get all potential candidates and their initial relative pose. =================
 	std::vector<KFConstraintStruct*, Eigen::aligned_allocator<KFConstraintStruct*> > constraints;
 	Frame* fabMapResult = 0;
+	//得到候选帧
 	std::unordered_set<Frame*, std::hash<Frame*>, std::equal_to<Frame*>,
 		Eigen::aligned_allocator< Frame* > > candidates = trackableKeyFrameSearch->findCandidates(newKeyFrame, fabMapResult, useFABMAP, closeCandidatesTH);
 	std::map< Frame*, Sim3, std::less<Frame*>, Eigen::aligned_allocator<std::pair<Frame*, Sim3> > > candidateToFrame_initialEstimateMap;
@@ -1281,8 +1286,9 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame* newKeyFrame, bool forcePar
 	}
 
 	poseConsistencyMutex.lock_shared();
-	for (Frame* candidate : candidates)
+	for (Frame* candidate : candidates)//Tnc的初始估计
 	{
+	    //Tnc n-new c-candidate
 		Sim3 candidateToFrame_initialEstimate = newKeyFrame->getScaledCamToWorld().inverse() * candidate->getScaledCamToWorld();
 		candidateToFrame_initialEstimateMap[candidate] = candidateToFrame_initialEstimate;
 	}
@@ -1306,21 +1312,21 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame* newKeyFrame, bool forcePar
 	int closeFailed = 0;
 	int closeInconsistent = 0;
 
-	SO3 disturbance = SO3::exp(Sophus::Vector3d(0.05,0,0));
+	SO3 disturbance = SO3::exp(Sophus::Vector3d(0.05,0,0));//扰动
 
-	for (Frame* candidate : candidates)
+	for (Frame* candidate : candidates)//轮询所有的候选帧
 	{
-		if (candidate->id() == newKeyFrame->id())
+		if (candidate->id() == newKeyFrame->id())//不是相同的帧
 			continue;
-		if(!candidate->pose->isInGraph)
+		if(!candidate->pose->isInGraph)  //已经加入g2o
 			continue;
-		if(newKeyFrame->hasTrackingParent() && candidate == newKeyFrame->getTrackingParent())
+		if(newKeyFrame->hasTrackingParent() && candidate == newKeyFrame->getTrackingParent())//不是父子关系
 			continue;
-		if(candidate->idxInKeyframes < INITIALIZATION_PHASE_COUNT)
+		if(candidate->idxInKeyframes < INITIALIZATION_PHASE_COUNT)//不与初始化的几帧进行回环
 			continue;
-
+        //Tnc
 		SE3 c2f_init = se3FromSim3(candidateToFrame_initialEstimateMap[candidate].inverse()).inverse();
-		c2f_init.so3() = c2f_init.so3() * disturbance;
+		c2f_init.so3() = c2f_init.so3() * disturbance;//旋转右乘一个扰动？？？为什么
 		SE3 c2f = constraintSE3Tracker->trackFrameOnPermaref(candidate, newKeyFrame, c2f_init);
 		if(!constraintSE3Tracker->trackingWasGood) {closeFailed++; continue;}
 

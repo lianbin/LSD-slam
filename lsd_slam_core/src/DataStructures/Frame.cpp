@@ -150,7 +150,7 @@ void Frame::takeReActivationData(DepthMapPixelHypothesis* depthMap)
 void Frame::setPermaRef(TrackingReference* reference)
 {
 	assert(reference->frameID == id());
-	reference->makePointCloud(QUICK_KF_CHECK_LVL);
+	reference->makePointCloud(QUICK_KF_CHECK_LVL);//第四层
 
 	permaRef_mutex.lock();
 

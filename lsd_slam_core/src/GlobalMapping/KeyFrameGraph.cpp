@@ -230,27 +230,27 @@ void KeyFrameGraph::dumpMap(std::string folder)
 }
 
 
-
+//本函数还没有把节点加入到图优化中。这里只是进行初始化。
 void KeyFrameGraph::addKeyFrame(Frame* frame)
 {
 	if(frame->pose->graphVertex != nullptr)
 		return;
 
 	// Insert vertex into g2o graph
-	VertexSim3* vertex = new VertexSim3();
+	VertexSim3* vertex = new VertexSim3();//节点
 	vertex->setId(frame->id());
-
+    //位姿的初始值
 	Sophus::Sim3d camToWorld_estimate = frame->getScaledCamToWorld();
 
 	if(!frame->hasTrackingParent())
-		vertex->setFixed(true);
+		vertex->setFixed(true);//如果没有父节点，则应该说明这是第一个位姿节点。所以固定
 
 	vertex->setEstimate(camToWorld_estimate);
-	vertex->setMarginalized(false);
+	vertex->setMarginalized(false);//注意，这里不进行边缘化。因为优化函数是位姿图优化。
 
-	frame->pose->graphVertex = vertex;
+	frame->pose->graphVertex = vertex;//表明本帧已经加入到图优化当中
 
-	newKeyframesBuffer.push_back(frame);
+	newKeyframesBuffer.push_back(frame);//需要加入到图优化中的点
 
 }
 
@@ -273,9 +273,9 @@ void KeyFrameGraph::insertConstraint(KFConstraintStruct* constraint)
 	edge->setVertex(1, constraint->secondFrame->pose->graphVertex);
 
 	constraint->edge = edge;
-	newEdgeBuffer.push_back(constraint);
+	newEdgeBuffer.push_back(constraint);//已经添加到图优化中的边
 
-
+    //添加相邻项
 	constraint->firstFrame->neighbors.insert(constraint->secondFrame);
 	constraint->secondFrame->neighbors.insert(constraint->firstFrame);
 
@@ -288,7 +288,7 @@ void KeyFrameGraph::insertConstraint(KFConstraintStruct* constraint)
 
 	edgesListsMutex.lock();
 	constraint->idxInAllEdges = edgesAll.size();
-	edgesAll.push_back(constraint);
+	edgesAll.push_back(constraint);//记录所有的边
 	edgesListsMutex.unlock();
 }
 
@@ -300,9 +300,9 @@ bool KeyFrameGraph::addElementsFromBuffer()
 	keyframesForRetrackMutex.lock();
 	for (auto newKF : newKeyframesBuffer)
 	{
-		graph.addVertex(newKF->pose->graphVertex);
+		graph.addVertex(newKF->pose->graphVertex);//添加顶点
 		assert(!newKF->pose->isInGraph);
-		newKF->pose->isInGraph = true;
+		newKF->pose->isInGraph = true;//已经添加到图优化中
 
 		keyframesForRetrack.push_back(newKF);
 
@@ -313,7 +313,7 @@ bool KeyFrameGraph::addElementsFromBuffer()
 	newKeyframesBuffer.clear();
 	for (auto edge : newEdgeBuffer)
 	{
-		graph.addEdge(edge->edge);
+		graph.addEdge(edge->edge);//添加边
 		added = true;
 	}
 	newEdgeBuffer.clear();

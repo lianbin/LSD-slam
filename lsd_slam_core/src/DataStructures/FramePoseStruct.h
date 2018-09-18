@@ -71,7 +71,7 @@ private:
 	Sim3 camToWorld;
 
 	// new, optimized absolute position. is added on mergeOptimization.
-	Sim3 camToWorld_new;
+	Sim3 camToWorld_new; //图优化之后的位姿
 
 	// whether camToWorld_new is newer than camToWorld
 	bool hasUnmergedPose;

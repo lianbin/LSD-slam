@@ -145,7 +145,7 @@ Sim3Tracker::~Sim3Tracker()
 	Eigen::internal::aligned_free((void*)buf_weight_VarD);
 }
 
-
+//返回的是Srf r-refrence f-frame
 Sim3 Sim3Tracker::trackFrameSim3(
 		TrackingReference* reference,
 		Frame* frame,
@@ -180,7 +180,7 @@ Sim3 Sim3Tracker::trackFrameSim3(
 		if(settings.maxItsPerLvl[lvl] == 0)
 			continue;
 
-		reference->makePointCloud(lvl);
+		reference->makePointCloud(lvl); //得到点云数据
 
 		// evaluate baseline-residual.
 		callOptimized(calcSim3Buffers, (reference, frame, referenceToFrame, lvl));
@@ -443,9 +443,11 @@ void Sim3Tracker::calcSim3Buffers(
 	float fy_l = KLvl(1,1);
 	float cx_l = KLvl(0,2);
 	float cy_l = KLvl(1,2);
-
+    //sRfr f-frame r-refrence
 	Eigen::Matrix3f rotMat = referenceToFrame.rxso3().matrix().cast<float>();
+	//Rfr
 	Eigen::Matrix3f rotMatUnscaled = referenceToFrame.rotationMatrix().cast<float>();
+	//tfr
 	Eigen::Vector3f transVec = referenceToFrame.translation().cast<float>();
 
 	// Calculate rotation around optical axis for rotating source frame gradients
@@ -461,13 +463,13 @@ void Sim3Tracker::calcSim3Buffers(
 
 
 	const Eigen::Vector3f* refPoint_max = reference->posData[level] + reference->numData[level];
-	const Eigen::Vector3f* refPoint = reference->posData[level];
-	const Eigen::Vector2f* refColVar = reference->colorAndVarData[level];
-	const Eigen::Vector2f* refGrad = reference->gradData[level];
+	const Eigen::Vector3f* refPoint = reference->posData[level];//参考帧的3D点
+	const Eigen::Vector2f* refColVar = reference->colorAndVarData[level];//像素与方差
+	const Eigen::Vector2f* refGrad = reference->gradData[level];//梯度
 
-	const float* 			frame_idepth = frame->idepth(level);
-	const float* 			frame_idepthVar = frame->idepthVar(level);
-	const Eigen::Vector4f* 	frame_intensityAndGradients = frame->gradients(level);
+	const float* 			frame_idepth = frame->idepth(level);//逆深度
+	const float* 			frame_idepthVar = frame->idepthVar(level);//逆深度的方差
+	const Eigen::Vector4f* 	frame_intensityAndGradients = frame->gradients(level);//dx dy 像素值
 
 
 	float sxx=0,syy=0,sx=0,sy=0,sw=0;
@@ -477,7 +479,8 @@ void Sim3Tracker::calcSim3Buffers(
 	int idx=0;
 	for(;refPoint<refPoint_max; refPoint++, refGrad++, refColVar++)
 	{
-		Eigen::Vector3f Wxp = rotMat * (*refPoint) + transVec;
+		Eigen::Vector3f Wxp = rotMat * (*refPoint) + transVec;//将参考帧坐标系下的3D点，变换到Frame坐标系下
+        //像素坐标
 		float u_new = (Wxp[0]/Wxp[2])*fx_l + cx_l;
 		float v_new = (Wxp[1]/Wxp[2])*fy_l + cy_l;
 
@@ -485,11 +488,11 @@ void Sim3Tracker::calcSim3Buffers(
 		// (inverse test to exclude NANs)
 		if(!(u_new > 1 && v_new > 1 && u_new < w-2 && v_new < h-2))
 			continue;
-
+        //记录变换后的3D点坐标
 		*(buf_warped_x+idx) = Wxp(0);
 		*(buf_warped_y+idx) = Wxp(1);
 		*(buf_warped_z+idx) = Wxp(2);
-
+        //梯度插值
 		Eigen::Vector3f resInterp = getInterpolatedElement43(frame_intensityAndGradients, u_new, v_new, w);
 
 
@@ -502,15 +505,16 @@ void Sim3Tracker::calcSim3Buffers(
 		*(buf_warped_dx+idx) = fx_l * 0.5f * (resInterp[0] + rotatedGradX);
 		*(buf_warped_dy+idx) = fy_l * 0.5f * (resInterp[1] + rotatedGradY);
 #else
-		*(buf_warped_dx+idx) = fx_l * resInterp[0];
+		*(buf_warped_dx+idx) = fx_l * resInterp[0]; //记录梯度，这里也多乘了一个焦距
 		*(buf_warped_dy+idx) = fy_l * resInterp[1];
 #endif
 
 
 		float c1 = affineEstimation_a * (*refColVar)[0] + affineEstimation_b;
-		float c2 = resInterp[2];
-		float residual_p = c1 - c2;
+		float c2 = resInterp[2]; 
+		float residual_p = c1 - c2; //光度残差
 
+		//神奇的仿射变换，现在不知道什么原理
 		float weight = fabsf(residual_p) < 2.0f ? 1 : 2.0f / fabsf(residual_p);
 		sxx += c1*c1*weight;
 		syy += c2*c2*weight;
@@ -518,23 +522,24 @@ void Sim3Tracker::calcSim3Buffers(
 		sy += c2*weight;
 		sw += weight;
 
-
+        //记录残差 与 逆深度方差
 		*(buf_warped_residual+idx) = residual_p;
 		*(buf_idepthVar+idx) = (*refColVar)[1];
 
 
 		// new (only for Sim3):
-		int idx_rounded = (int)(u_new+0.5f) + w*(int)(v_new+0.5f);
-		float var_frameDepth = frame_idepthVar[idx_rounded];
-		float ref_idepth = 1.0f / Wxp[2];
-		*(buf_d+idx) = 1.0f / (*refPoint)[2];
+		int idx_rounded = (int)(u_new+0.5f) + w*(int)(v_new+0.5f);//投影像素的索引
+		float var_frameDepth = frame_idepthVar[idx_rounded];//逆深度方差
+		float ref_idepth = 1.0f / Wxp[2];//投影后的逆深度
+		*(buf_d+idx) = 1.0f / (*refPoint)[2];//参考帧中的逆深度
 		if(var_frameDepth > 0)
 		{
+		    //投影得到的逆深度-之前的逆深度
 			float residual_d = ref_idepth - frame_idepth[idx_rounded];
-			*(buf_residual_d+idx) = residual_d;
-			*(buf_warped_idepthVar+idx) = var_frameDepth;
+			*(buf_residual_d+idx) = residual_d;           //逆深度残差
+			*(buf_warped_idepthVar+idx) = var_frameDepth; //被投影帧的逆深度方差
 		}
-		else
+		else//无效深度
 		{
 			*(buf_residual_d+idx) = -1;
 			*(buf_warped_idepthVar+idx) = -1;
@@ -744,10 +749,11 @@ Sim3ResidualStruct Sim3Tracker::calcSim3WeightsAndResidualNEON(
 }
 #endif
 
-
+//计算归一化方差，以及残差
 Sim3ResidualStruct Sim3Tracker::calcSim3WeightsAndResidual(
 		const Sim3& referenceToFrame)
 {
+    //假设只存在平移
 	float tx = referenceToFrame.translation()[0];
 	float ty = referenceToFrame.translation()[1];
 	float tz = referenceToFrame.translation()[2];
@@ -764,14 +770,15 @@ Sim3ResidualStruct Sim3Tracker::calcSim3WeightsAndResidual(
 		float py = *(buf_warped_y+i);	// y'
 		float pz = *(buf_warped_z+i);	// z'
 
-		float d = *(buf_d+i);	// d
+		float d = *(buf_d+i);	// d 逆深度
 
 		float rp = *(buf_warped_residual+i); // r_p
 		float rd = *(buf_residual_d+i);	 // r_d
 
 		float gx = *(buf_warped_dx+i);	// \delta_x I
 		float gy = *(buf_warped_dy+i);  // \delta_y I
-
+        //s 参考帧的逆深度方差
+        //sv 被投影帧的逆深度方差
 		float s = settings.var_weight * *(buf_idepthVar+i);	// \sigma_d^2
 		float sv = settings.var_weight * *(buf_warped_idepthVar+i);	// \sigma_d^2'
 

@@ -362,6 +362,7 @@ void SlamSystem::constraintSearchThreadLoop()
 	printf("Exited constraint search thread \n");
 }
 
+
 //优化线程
 void SlamSystem::optimizationThreadLoop()
 {
@@ -372,16 +373,16 @@ void SlamSystem::optimizationThreadLoop()
 		boost::unique_lock<boost::mutex> lock(newConstraintMutex);
 		if(!newConstraintAdded)
 			newConstraintCreatedSignal.timed_wait(lock,boost::posix_time::milliseconds(2000));	// slight chance of deadlock otherwise
-		newConstraintAdded = false;
+		newConstraintAdded = false;//重新置位
 		lock.unlock();
 
-		if(doFinalOptimization)
+		if(doFinalOptimization)//程序结束时，进行最后一次优化
 		{
 			printf("doing final optimization iteration!\n");
 			optimizationIteration(50, 0.001);
 			doFinalOptimization = false;
 		}
-		while(optimizationIteration(5, 0.02));
+		while(optimizationIteration(5, 0.02));//
 	}
 
 	printf("Exited optimization thread \n");
@@ -416,7 +417,7 @@ void SlamSystem::finishCurrentKeyframe()
 		{
 			keyFrameGraph->keyframesAllMutex.lock();
 			currentKeyFrame->idxInKeyframes = keyFrameGraph->keyframesAll.size();
-			keyFrameGraph->keyframesAll.push_back(currentKeyFrame.get());
+			keyFrameGraph->keyframesAll.push_back(currentKeyFrame.get());//存储所有的帧
 			keyFrameGraph->totalPoints += currentKeyFrame->numPoints;
 			keyFrameGraph->totalVertices ++;
 			keyFrameGraph->keyframesAllMutex.unlock();
@@ -1067,7 +1068,7 @@ void SlamSystem::trackFrame(uchar* image, unsigned int frameID, bool blockUntilM
 	}
 }
 
-
+//A = frame; b = candidate
 float SlamSystem::tryTrackSim3(
 		TrackingReference* A, TrackingReference* B,
 		int lvlStart, int lvlEnd,
@@ -1129,10 +1130,10 @@ float SlamSystem::tryTrackSim3(
 
 	if(e1 != 0 && e2 != 0)
 	{
-		e1->firstFrame = A->keyframe;
+		e1->firstFrame = A->keyframe;   //帧信息
 		e1->secondFrame = B->keyframe;
-		e1->secondToFirst = BtoA;
-		e1->information = BtoAInfo.cast<double>();
+		e1->secondToFirst = BtoA;       //变换信息
+		e1->information = BtoAInfo.cast<double>(); //信息矩阵
 		e1->meanResidual = BtoA_meanResidual;
 		e1->meanResidualD = BtoA_meanDResidual;
 		e1->meanResidualP = BtoA_meanPResidual;
@@ -1141,7 +1142,7 @@ float SlamSystem::tryTrackSim3(
 		e2->firstFrame = B->keyframe;
 		e2->secondFrame = A->keyframe;
 		e2->secondToFirst = AtoB;
-		e2->information = AtoBInfo.cast<double>();
+		e2->information = AtoBInfo.cast<double>();//信息矩阵
 		e2->meanResidual = AtoB_meanResidual;
 		e2->meanResidualD = AtoB_meanDResidual;
 		e2->meanResidualP = AtoB_meanPResidual;
@@ -1165,6 +1166,7 @@ void SlamSystem::testConstraint(
 	Sim3 FtoC = candidateToFrame_initialEstimate.inverse(), CtoF = candidateToFrame_initialEstimate;
 	Matrix7x7 FtoCInfo, CtoFInfo;
 
+	//计算level4-level3
 	float err_level3 = tryTrackSim3(
 			newKFTrackingReference, candidateTrackingReference,	// A = frame; b = candidate
 			SIM3TRACKING_MAX_LEVEL-1, 3,
@@ -1184,7 +1186,8 @@ void SlamSystem::testConstraint(
 		newKFTrackingReference->keyframe->trackingFailed.insert(std::pair<Frame*,Sim3>(candidate, candidateToFrame_initialEstimate));
 		return;
 	}
-
+    
+	//计算level2
 	float err_level2 = tryTrackSim3(
 			newKFTrackingReference, candidateTrackingReference,	// A = frame; b = candidate
 			2, 2,
@@ -1207,7 +1210,7 @@ void SlamSystem::testConstraint(
 	e1_out = new KFConstraintStruct();
 	e2_out = new KFConstraintStruct();
 
-
+    //计算level1
 	float err_level1 = tryTrackSim3(
 			newKFTrackingReference, candidateTrackingReference,	// A = frame; b = candidate
 			1, 1,
@@ -1239,6 +1242,7 @@ void SlamSystem::testConstraint(
 	const float kernelDelta = 5 * sqrt(6000*loopclosureStrictness);
 	e1_out->robustKernel = new g2o::RobustKernelHuber();
 	e1_out->robustKernel->setDelta(kernelDelta);
+
 	e2_out->robustKernel = new g2o::RobustKernelHuber();
 	e2_out->robustKernel->setDelta(kernelDelta);
 }
@@ -1324,25 +1328,27 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame* newKeyFrame, bool forcePar
 			continue;
 		if(candidate->idxInKeyframes < INITIALIZATION_PHASE_COUNT)//不与初始化的几帧进行回环
 			continue;
+		//相互矫正
         //Tnc
 		SE3 c2f_init = se3FromSim3(candidateToFrame_initialEstimateMap[candidate].inverse()).inverse();
-		c2f_init.so3() = c2f_init.so3() * disturbance;//旋转右乘一个扰动？？？为什么
+		c2f_init.so3() = c2f_init.so3() * disturbance;//旋转右乘一个扰动？？？为什么，是否是
 		SE3 c2f = constraintSE3Tracker->trackFrameOnPermaref(candidate, newKeyFrame, c2f_init);
 		if(!constraintSE3Tracker->trackingWasGood) {closeFailed++; continue;}
 
-
+        
+        //Tcn
 		SE3 f2c_init = se3FromSim3(candidateToFrame_initialEstimateMap[candidate]).inverse();
 		f2c_init.so3() = disturbance * f2c_init.so3();
 		SE3 f2c = constraintSE3Tracker->trackFrameOnPermaref(newKeyFrame, candidate, f2c_init);
 		if(!constraintSE3Tracker->trackingWasGood) {closeFailed++; continue;}
-
+        //对数映射应该等于0
 		if((f2c.so3() * c2f.so3()).log().norm() >= 0.09) {closeInconsistent++; continue;}
 
 		closeCandidates.insert(candidate);
 	}
 
 
-
+    //继续筛选候选帧
 	int farFailed = 0;
 	int farInconsistent = 0;
 	for (Frame* candidate : candidates)
@@ -1508,8 +1514,8 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame* newKeyFrame, bool forcePar
 
 		if(e1 != 0)
 		{
-			constraints.push_back(e1);
-			constraints.push_back(e2);
+			constraints.push_back(e1);//添加约束
+			constraints.push_back(e2);//添加约束
 
 			// delete from far candidates if it's in there.
 			for(unsigned int k=0;k<farCandidates.size();k++)
@@ -1542,30 +1548,30 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame* newKeyFrame, bool forcePar
 
 		if(e1 != 0)
 		{
-			constraints.push_back(e1);
-			constraints.push_back(e2);
+			constraints.push_back(e1);//添加约束
+			constraints.push_back(e2);//添加约束
 		}
 	}
 
 
 
-	if(parent != 0 && forceParent)
+	if(parent != 0 && forceParent)//parent必须加入constraints里
 	{
 		KFConstraintStruct* e1=0;
 		KFConstraintStruct* e2=0;
 		testConstraint(
 				parent, e1, e2,
 				candidateToFrame_initialEstimateMap[parent],
-				100);
+				100);//这里给的是100，条件相当宽松
 		if(enablePrintDebugInfo && printConstraintSearchInfo)
 			printf(" PARENT (0)\n");
 
 		if(e1 != 0)
 		{
-			constraints.push_back(e1);
-			constraints.push_back(e2);
+			constraints.push_back(e1);//添加约束
+			constraints.push_back(e2);//添加约束
 		}
-		else
+		else //前面那么宽松的条件，还是无法满足，不管，反正他妈死活也要给他爸爸加进去。
 		{
 			float downweightFac = 5;
 			const float kernelDelta = 5 * sqrt(6000*loopclosureStrictness) / downweightFac;
@@ -1575,7 +1581,9 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame* newKeyFrame, bool forcePar
 			constraints.push_back(new KFConstraintStruct());
 			constraints.back()->firstFrame = newKeyFrame;
 			constraints.back()->secondFrame = newKeyFrame->getTrackingParent();
+			//直接使用里程计的先验
 			constraints.back()->secondToFirst = constraints.back()->firstFrame->getScaledCamToWorld().inverse() * constraints.back()->secondFrame->getScaledCamToWorld();
+            //这个信息矩阵是咋来的，感觉上就是一个7*7的高斯分布矩阵
 			constraints.back()->information  <<
 					0.8098,-0.1507,-0.0557, 0.1211, 0.7657, 0.0120, 0,
 					-0.1507, 2.1724,-0.1103,-1.9279,-0.1182, 0.1943, 0,
@@ -1606,7 +1614,7 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame* newKeyFrame, bool forcePar
 		keyFrameGraph->insertConstraint(constraints[i]);
 
 
-	newConstraintAdded = true;
+	newConstraintAdded = true;//添加新的约束标志位
 	newConstraintCreatedSignal.notify_all();
 	newConstraintMutex.unlock();
 
@@ -1620,7 +1628,8 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame* newKeyFrame, bool forcePar
 
 
 
-
+//itsPerTry 迭代次数 5
+//minChange 0.02
 bool SlamSystem::optimizationIteration(int itsPerTry, float minChange)
 {
 	struct timeval tv_start, tv_end;
@@ -1632,12 +1641,12 @@ bool SlamSystem::optimizationIteration(int itsPerTry, float minChange)
 
 	// lock new elements buffer & take them over.
 	newConstraintMutex.lock();
-	keyFrameGraph->addElementsFromBuffer();
+	keyFrameGraph->addElementsFromBuffer();//将新的边和顶点加入到图优化中
 	newConstraintMutex.unlock();
 
 
 	// Do the optimization. This can take quite some time!
-	int its = keyFrameGraph->optimize(itsPerTry);
+	int its = keyFrameGraph->optimize(itsPerTry);//进行优化
 	
 
 	// save the optimization result.
@@ -1646,19 +1655,18 @@ bool SlamSystem::optimizationIteration(int itsPerTry, float minChange)
 	float maxChange = 0;
 	float sumChange = 0;
 	float sum = 0;
-	for(size_t i=0;i<keyFrameGraph->keyframesAll.size(); i++)
+	for(size_t i=0;i<keyFrameGraph->keyframesAll.size(); i++)//轮训所有的关键帧
 	{
 		// set edge error sum to zero
 		keyFrameGraph->keyframesAll[i]->edgeErrorSum = 0;
 		keyFrameGraph->keyframesAll[i]->edgesNum = 0;
 
-		if(!keyFrameGraph->keyframesAll[i]->pose->isInGraph) continue;
-
-
+		if(!keyFrameGraph->keyframesAll[i]->pose->isInGraph) 
+			continue;//并不是所有的关键帧都进行图优化
 
 		// get change from last optimization
-		Sim3 a = keyFrameGraph->keyframesAll[i]->pose->graphVertex->estimate();
-		Sim3 b = keyFrameGraph->keyframesAll[i]->getScaledCamToWorld();
+		Sim3 a = keyFrameGraph->keyframesAll[i]->pose->graphVertex->estimate();//优化后的位姿
+		Sim3 b = keyFrameGraph->keyframesAll[i]->getScaledCamToWorld();//原来的位姿
 		Sophus::Vector7f diff = (a*b.inverse()).log().cast<float>();
 
 
@@ -1671,7 +1679,7 @@ bool SlamSystem::optimizationIteration(int itsPerTry, float minChange)
 		sum +=7;
 
 		// set change
-		keyFrameGraph->keyframesAll[i]->pose->setPoseGraphOptResult(
+		keyFrameGraph->keyframesAll[i]->pose->setPoseGraphOptResult(//设置camToWorld_new变量为图优化后的位姿
 				keyFrameGraph->keyframesAll[i]->pose->graphVertex->estimate());
 
 		// add error
